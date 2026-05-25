@@ -1,12 +1,15 @@
 import streamlit as st
 import pandas as pd
+from PIL import Image
+
+icon = Image.open("violencia-icon.png")  # caminho relativo ao app.py
 
 # ─────────────────────────────────────────────
 # Configuração da página
 # ─────────────────────────────────────────────
 st.set_page_config(
     page_title="VulneraMapa — Violência Doméstica",
-    page_icon="🔴",
+    page_icon=icon,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -20,72 +23,74 @@ st.markdown("""
 
 html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
 
-.stApp { background-color: #0f0f14; color: #e8e4df; }
+/* Fundo branco levemente aquecido — acolhedor, sem peso */
+.stApp { background-color: #f7f5f2; color: #2e2a26; }
 
+/* Sidebar em tom areia suave */
 section[data-testid="stSidebar"] {
-    background-color: #13131b;
-    border-right: 1px solid #222230;
+    background-color: #edeae5;
+    border-right: 1px solid #d8d3cc;
 }
 
-h1, h2, h3, h4 { color: #f0ebe4 !important; }
+h1, h2, h3, h4 { color: #2e2a26 !important; }
 
 .main-title {
     font-size: 1.85rem;
     font-weight: 700;
     letter-spacing: -0.03em;
-    color: #f0ebe4;
+    color: #2e2a26;
     line-height: 1.2;
     margin-bottom: 0.2rem;
 }
 .main-subtitle {
     font-size: 0.8rem;
-    color: #666688;
+    color: #8a8278;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     margin-bottom: 1.5rem;
 }
 
-/* blocos de campos */
+/* blocos de campos — azul-petróleo discreto, transmite confiança */
 .bloco-label {
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #c0392b;
+    color: #3d7a8a;
     margin-bottom: 0.4rem;
     margin-top: 1.2rem;
 }
 
-/* placeholder de resultado */
+/* placeholder de resultado — fundo branco, borda pontilhada suave */
 .result-placeholder {
-    background: #12121a;
-    border: 1px dashed #2a2a3a;
+    background: #ffffff;
+    border: 1px dashed #c8c2ba;
     border-radius: 10px;
     padding: 2.2rem 1.5rem;
     text-align: center;
-    color: #44445a;
+    color: #9a9288;
     font-size: 0.85rem;
     line-height: 1.7;
 }
 
-/* nota metodológica */
+/* nota metodológica — azul muito claro, tom informativo e calmo */
 .nota-metodologica {
-    background: #17170e;
-    border-left: 3px solid #c8a84b;
+    background: #eef5f7;
+    border-left: 3px solid #3d7a8a;
     border-radius: 0 8px 8px 0;
     padding: 0.8rem 1rem;
     font-size: 0.78rem;
-    color: #a09870;
+    color: #3a5f68;
     margin-top: 1.4rem;
     line-height: 1.6;
 }
 
-/* badge mock */
+/* badge mock — tom neutro, discreto */
 .badge-mock {
     display: inline-block;
-    background: #1e1228;
-    border: 1px solid #5a2a8a;
-    color: #a070d8;
+    background: #e8e4de;
+    border: 1px solid #b8b0a6;
+    color: #6e6660;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
     padding: 2px 8px;
@@ -94,9 +99,9 @@ h1, h2, h3, h4 { color: #f0ebe4 !important; }
     vertical-align: middle;
 }
 
-/* botão */
+/* botão — verde-azulado que transmite segurança e ação positiva */
 .stButton > button {
-    background: #c0392b !important;
+    background: #3d7a8a !important;
     color: white !important;
     border: none !important;
     border-radius: 8px !important;
@@ -108,20 +113,20 @@ h1, h2, h3, h4 { color: #f0ebe4 !important; }
     margin-top: 0.5rem;
     transition: background 0.2s !important;
 }
-.stButton > button:hover { background: #e74c3c !important; }
+.stButton > button:hover { background: #2e6070 !important; }
 
-hr { border-color: #222232 !important; }
+hr { border-color: #d8d3cc !important; }
 
 /* selectbox */
 div[data-baseweb="select"] > div {
-    background-color: #16161f !important;
-    border-color: #2a2a3a !important;
-    color: #e8e4df !important;
+    background-color: #ffffff !important;
+    border-color: #c8c2ba !important;
+    color: #2e2a26 !important;
 }
 
 /* upload box */
 [data-testid="stFileUploader"] {
-    background: #14141c;
+    background: #edeae5;
     border: 1px dashed #2a2a3a;
     border-radius: 10px;
     padding: 0.5rem;
@@ -146,6 +151,51 @@ UFS = sorted([
     "MA","MG","MS","MT","PA","PB","PE","PI","PR",
     "RJ","RN","RO","RR","RS","SC","SE","SP","TO",
 ])
+
+# ─────────────────────────────────────────────
+# Relação UF -> Região
+# ─────────────────────────────────────────────
+UF_PARA_REGIAO = {
+    "AC": "Norte",
+    "AL": "Nordeste",
+    "AM": "Norte",
+    "AP": "Norte",
+    "BA": "Nordeste",
+    "CE": "Nordeste",
+    "DF": "Centro-Oeste",
+    "ES": "Sudeste",
+    "GO": "Centro-Oeste",
+    "MA": "Nordeste",
+    "MG": "Sudeste",
+    "MS": "Centro-Oeste",
+    "MT": "Centro-Oeste",
+    "PA": "Norte",
+    "PB": "Nordeste",
+    "PE": "Nordeste",
+    "PI": "Nordeste",
+    "PR": "Sul",
+    "RJ": "Sudeste",
+    "RN": "Nordeste",
+    "RO": "Norte",
+    "RR": "Norte",
+    "RS": "Sul",
+    "SC": "Sul",
+    "SE": "Nordeste",
+    "SP": "Sudeste",
+    "TO": "Norte",
+}
+
+# ─────────────────────────────────────────────
+# Média aproximada de IDHM por macroregião
+# (valores referenciais)
+# ─────────────────────────────────────────────
+IDHM_POR_REGIAO = {
+    "Norte": "Médio (0.60–0.69)",
+    "Nordeste": "Baixo (0.50–0.59)",
+    "Centro-Oeste": "Alto (0.70–0.79)",
+    "Sudeste": "Alto (0.70–0.79)",
+    "Sul": "Alto (0.70–0.79)",
+}
 
 # faixas criadas pelo pd.cut no notebook (bins=[0,17,24,34,44,54,64,120])
 FAIXAS_ETARIAS = [
@@ -223,17 +273,17 @@ REGIOES = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"]
 # Sidebar
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🔴 VulneraMapa")
+    st.markdown("###  VulneraMapa")
     st.markdown(
         "<small style='color:#555'>Modelo preditivo de reincidência<br>"
-        "Violência doméstica · UFRA 2025</small>",
+        "Violência doméstica · UFRA 2026</small>",
         unsafe_allow_html=True,
     )
     st.markdown("---")
 
     modo = st.radio(
         "**Modo de uso**",
-        options=["🧩 Simulador de Perfil", "📂 Análise em Lote"],
+        options=["Simulador de Perfil", "Análise em Lote"],
         index=0,
     )
 
@@ -265,7 +315,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<p class="fonte-tag">Variável-alvo: reincidência (OUT_VEZES) · Modelo: RandomForestClassifier · Dados: SINAN 2010–2024</p>',
+    '<p class="fonte-tag">Variável-alvo: reincidência Modelo: Random Forest Classifier Dados: SINAN 2010–2024</p>',
     unsafe_allow_html=True,
 )
 st.markdown("---")
@@ -274,7 +324,7 @@ st.markdown("---")
 # ═════════════════════════════════════════════
 # TELA 1 — Simulador de Perfil
 # ═════════════════════════════════════════════
-if modo == "🧩 Simulador de Perfil":
+if modo == "Simulador de Perfil":
 
     st.markdown(
         "#### Simulador de Perfil Sociodemográfico"
@@ -288,19 +338,88 @@ if modo == "🧩 Simulador de Perfil":
     )
     st.markdown("")
 
+    uf = st.selectbox(
+        "UF de residência",
+        options=UFS,
+        index=UFS.index("PA"),
+        key="uf_select",
+        help="Coluna 'uf' do df_final (SG_UF original do SINAN)",
+    )
+
+    regiao_auto = UF_PARA_REGIAO.get(uf, "Norte")
+    idhm_auto = IDHM_POR_REGIAO.get(regiao_auto, "Médio (0.60–0.69)")
+
+    idhm_options = [
+        "Muito baixo (< 0.50)",
+        "Baixo (0.50–0.59)",
+        "Médio (0.60–0.69)",
+        "Alto (0.70–0.79)",
+        "Muito alto (≥ 0.80)",
+    ]
+
+    if st.session_state.get("last_uf") != uf:
+        st.session_state["last_uf"] = uf
+        st.session_state["faixa_idhm"] = idhm_auto
+
+    st.markdown('<p class="bloco-label">Contexto municipal (IDH)</p>', unsafe_allow_html=True)
+
+    faixa_idhm = st.select_slider(
+        "Faixa de IDHM municipal",
+        options=idhm_options,
+        value=st.session_state.get("faixa_idhm", idhm_auto),
+        key="faixa_idhm",
+        help="Valor inicial baseado na média da macroregião da UF selecionada",
+    )
+
+    st.markdown(
+        f"""
+        <div style="
+        background:#ffffff;
+        border:1px solid #d8d3cc;
+        border-radius:8px;
+        padding:0.85rem 1rem;
+        margin-top:1.2rem;
+        margin-bottom:1.7rem;
+        ">
+        <small style="
+            color:#8a8278;
+            text-transform:uppercase;
+            letter-spacing:0.08em;
+            font-size:0.68rem;
+            font-weight:600;
+            ">
+                Macroregião
+            </small>
+
+        <div style="
+            margin-top:0.35rem;
+            font-size:1rem;
+            font-weight:600;
+            color:#2e2a26;
+        ">
+            {regiao_auto}
+        </div>
+
+        <div style="
+            margin-top:0.45rem;
+            font-size:0.82rem;
+            color:#5b5451;
+        ">
+            IDHM de referência: <b>{idhm_auto}</b>
+        </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    regiao = regiao_auto
+
     with st.form("form_simulador"):
 
         # — Bloco 1: Perfil da vítima ——————————————————————
         st.markdown('<p class="bloco-label">Perfil da vítima</p>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            uf = st.selectbox(
-                "UF de residência",
-                options=UFS,
-                index=UFS.index("PA"),
-                help="Coluna 'uf' do df_final (SG_UF original do SINAN)",
-            )
-        with c2:
             faixa_key = st.selectbox(
                 "Faixa etária",
                 options=FAIXAS_ETARIAS,
@@ -308,35 +427,42 @@ if modo == "🧩 Simulador de Perfil":
                 index=2,
                 help="Derivada de NU_IDADE_N com pd.cut (bins 0,17,24,34,44,54,64,120)",
             )
-        with c3:
+        with c2:
             raca = st.selectbox(
                 "Raça / cor",
                 options=RACAS,
                 index=3,
                 help="mapa_raca do notebook — códigos 1–5 + 9=Ignorado",
             )
-
-        c4, c5, c6 = st.columns(3)
-        with c4:
+        with c3:
             escolaridade = st.selectbox(
                 "Escolaridade",
                 options=ESCOLARIDADES,
                 index=2,
                 help="mapa_escol do notebook — CS_ESCOL_N",
             )
-        with c5:
+
+        c4, c5, c6 = st.columns(3)
+        with c4:
             sit_conjugal = st.selectbox(
                 "Situação conjugal",
                 options=SIT_CONJUGAL,
                 index=1,
                 help="mapa_conjug do notebook — SIT_CONJUG",
             )
-        with c6:
+        with c5:
             relacao = st.selectbox(
                 "Relação com o agressor",
                 options=RELACAO_AGRESSOR,
                 index=0,
                 help="Derivada das colunas REL_* binárias do SINAN",
+            )
+        with c6:
+            autor_alcool = st.selectbox(
+                "Agressor sob efeito de álcool",
+                options=["Sim", "Não", "Ignorado"],
+                index=2,
+                help="AUTOR_ALCO do SINAN",
             )
 
         # — Bloco 2: Tipo de violência ——————————————————————
@@ -347,80 +473,58 @@ if modo == "🧩 Simulador de Perfil":
             with cv[i]:
                 sel_violencias[col_key] = st.checkbox(label, value=(col_key == "viol_fisica"))
 
-        # — Bloco 3: Contexto municipal ——————————————————————
-        st.markdown('<p class="bloco-label">Contexto municipal (IDH)</p>', unsafe_allow_html=True)
-        cm1, cm2, cm3 = st.columns(3)
-        with cm1:
-            faixa_idhm = st.select_slider(
-                "Faixa de IDHM municipal",
-                options=["Muito baixo (< 0.50)", "Baixo (0.50–0.59)",
-                         "Médio (0.60–0.69)", "Alto (0.70–0.79)", "Muito alto (≥ 0.80)"],
-                value="Médio (0.60–0.69)",
-                help="idhm do IPEA · Atlas Brasil 2010",
-            )
-        with cm2:
-            regiao = st.selectbox("Macrorregião", options=REGIOES, index=0,
-                                  help="nome_regiao do df_final")
-        with cm3:
-            autor_alcool = st.selectbox(
-                "Agressor sob efeito de álcool",
-                options=["Sim", "Não", "Ignorado"],
-                index=2,
-                help="AUTOR_ALCO do SINAN",
-            )
-
         submitted = st.form_submit_button(
-            "▶  Estimar Probabilidade de Reincidência", use_container_width=True
+            "Estimar Probabilidade de Reincidência", use_container_width=True
         )
 
-    # Área de resultado
-    st.markdown("---")
-    if submitted:
-        st.markdown("##### Resultado da Estimativa")
+        # Área de resultado
+        st.markdown("---")
+        if submitted:
+            st.markdown("##### Resultado da Estimativa")
 
-        # resumo do perfil selecionado (sem chamar API ainda)
-        viols_sel = [v for k, v in TIPOS_VIOLENCIA.items() if sel_violencias[k]]
-        resumo = {
-            "UF": uf,
-            "Faixa etária": FAIXAS_DISPLAY[faixa_key],
-            "Raça": raca,
-            "Escolaridade": escolaridade,
-            "Sit. conjugal": sit_conjugal,
-            "Relação agressor": relacao,
-            "Tipos de violência": ", ".join(viols_sel) if viols_sel else "Nenhum selecionado",
-            "IDHM": faixa_idhm,
-            "Macrorregião": regiao,
-            "Agressor c/ álcool": autor_alcool,
-        }
+            # resumo do perfil selecionado (sem chamar API ainda)
+            viols_sel = [v for k, v in TIPOS_VIOLENCIA.items() if sel_violencias[k]]
+            resumo = {
+                "UF": uf,
+                "Faixa etária": FAIXAS_DISPLAY[faixa_key],
+                "Raça": raca,
+                "Escolaridade": escolaridade,
+                "Sit. conjugal": sit_conjugal,
+                "Relação agressor": relacao,
+                "Tipos de violência": ", ".join(viols_sel) if viols_sel else "Nenhum selecionado",
+                "IDHM": faixa_idhm,
+                "Macrorregião": regiao,
+                "Agressor c/ álcool": autor_alcool,
+            }
 
-        col_res, col_info = st.columns([1, 1])
-        with col_res:
+            col_res, col_info = st.columns([1, 1])
+            with col_res:
+                st.markdown(
+                    '<div class="result-placeholder">'
+                    '🔌 <b>Aguardando integração com a API do backend (Gabriel)</b><br><br>'
+                    'Aqui serão exibidos:<br>'
+                    '• Probabilidade estimada de reincidência (%) com intervalo de confiança<br>'
+                    '• Comparativo com média nacional e por UF<br>'
+                    '• Gráfico SHAP interativo dos fatores de maior peso<br>'
+                    '• Indicador de parceiro_intimo e n_tipos_violencia<br>'
+                    '• Índice de vulnerabilidade sociodemográfica (PCA)'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+            with col_info:
+                st.markdown("**Perfil enviado para estimativa:**")
+                st.dataframe(
+                    pd.DataFrame(resumo.items(), columns=["Campo", "Valor"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
             st.markdown(
-                '<div class="result-placeholder">'
-                '🔌 <b>Aguardando integração com a API do backend (Gabriel)</b><br><br>'
-                'Aqui serão exibidos:<br>'
-                '• Probabilidade estimada de reincidência (%) com intervalo de confiança<br>'
-                '• Comparativo com média nacional e por UF<br>'
-                '• Gráfico SHAP interativo dos fatores de maior peso<br>'
-                '• Indicador de parceiro_intimo e n_tipos_violencia<br>'
-                '• Índice de vulnerabilidade sociodemográfica (PCA)'
+                '<div class="result-placeholder" style="margin-bottom:1rem;">'
+                'Preencha o perfil acima e clique em <b>Estimar Probabilidade de Reincidência</b>.'
                 '</div>',
                 unsafe_allow_html=True,
             )
-        with col_info:
-            st.markdown("**Perfil enviado para estimativa:**")
-            st.dataframe(
-                pd.DataFrame(resumo.items(), columns=["Campo", "Valor"]),
-                use_container_width=True,
-                hide_index=True,
-            )
-    else:
-        st.markdown(
-            '<div class="result-placeholder">'
-            'Preencha o perfil acima e clique em <b>Estimar Probabilidade de Reincidência</b>.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
 
     st.markdown(
         '<div class="nota-metodologica">'
@@ -438,7 +542,7 @@ if modo == "🧩 Simulador de Perfil":
 # ═════════════════════════════════════════════
 # TELA 2 — Análise em Lote
 # ═════════════════════════════════════════════
-elif modo == "📂 Análise em Lote":
+elif modo == "Análise em Lote":
 
     st.markdown(
         "#### Análise em Lote por Dataset Municipal"
@@ -454,7 +558,7 @@ elif modo == "📂 Análise em Lote":
     st.markdown("")
 
     # formato esperado
-    with st.expander("📋 Colunas esperadas no arquivo (df_final)"):
+    with st.expander("Colunas esperadas no arquivo (df_final)"):
         colunas_esperadas = [
             ("ano", "Arquivo de origem — ex: VIOLBR22"),
             ("uf", "Sigla da UF (SG_UF original)"),
@@ -482,7 +586,7 @@ elif modo == "📂 Análise em Lote":
         )
 
     uploaded_file = st.file_uploader(
-        "📁 Carregar arquivo CSV ou Parquet com microdados municipais",
+        "Carregar arquivo CSV ou Parquet com microdados municipais",
         type=["csv", "parquet"],
         help="Formato gerado pelo notebook limpeza_dataframe.ipynb (df_final)",
     )
@@ -495,7 +599,7 @@ elif modo == "📂 Análise em Lote":
                 df_up = pd.read_csv(uploaded_file)
 
             st.success(
-                f"✅ **{uploaded_file.name}** carregado — "
+                f"**{uploaded_file.name}** carregado — "
                 f"{len(df_up):,} registros · {len(df_up.columns)} colunas"
             )
 
@@ -525,7 +629,7 @@ elif modo == "📂 Análise em Lote":
             st.markdown("##### Resultados da Análise em Lote")
             st.markdown(
                 '<div class="result-placeholder">'
-                '🔌 <b>Aguardando integração com a API do backend (Gabriel)</b><br><br>'
+                '<b>Aguardando integração com a API do backend (Gabriel)</b><br><br>'
                 'Aqui serão exibidos:<br>'
                 '• Ranking de vulnerabilidade por perfil (UF × raça × escolaridade)<br>'
                 '• Mapa choropleth interativo por UF (Plotly)<br>'
@@ -542,7 +646,7 @@ elif modo == "📂 Análise em Lote":
     else:
         st.markdown(
             '<div class="result-placeholder">'
-            '📂 Faça upload de um arquivo <code>CSV</code> ou <code>Parquet</code> '
+            ' Faça upload de um arquivo <code>CSV</code> ou <code>Parquet</code> '
             'no formato do <code>df_final</code> gerado pelo notebook de limpeza.'
             '</div>',
             unsafe_allow_html=True,
