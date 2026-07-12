@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import plotly.graph_objects as go
 from PIL import Image
 import os
 
@@ -27,8 +28,9 @@ except Exception:
 # ─────────────────────────────────────────────
 # URL do backend — altere conforme seu deploy
 # ─────────────────────────────────────────────
-BACKEND_URL = os.getenv("BACKEND_URL", "https://cdiibackend.onrender.com")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://cdiibackend-grt5.onrender.com")
 PREDICT_ENDPOINT = f"{BACKEND_URL}/predict"
+FEATURES_ENDPOINT = f"{BACKEND_URL}/model/features"
 
 # ─────────────────────────────────────────────
 # CSS
@@ -249,8 +251,28 @@ TIPOS_VIOLENCIA = {
 # Função auxiliar: chama /predict
 # ─────────────────────────────────────────────
 def chamar_predict(payload: dict) -> dict:
-    """Retorna o JSON de resposta do backend ou lança exceção."""
-    resp = requests.post(PREDICT_ENDPOINT, json=payload, timeout=15)
+    """Chama POST /predict e retorna o JSON de resposta do backend ou lança exceção.
+
+    Trata especificamente os códigos documentados na API:
+    - 422: input não pôde ser convertido nas 28 features do modelo
+    - 500: falha do scaler ou do modelo
+    - 503: artefato do modelo indisponível
+    """
+    resp = requests.post(PREDICT_ENDPOINT, json=payload, timeout=30)
+    if resp.status_code == 422:
+        raise ValueError(f"Dados inválidos para o modelo (422): {resp.text}")
+    if resp.status_code == 500:
+        raise RuntimeError(f"Falha ao executar o modelo/scaler no backend (500): {resp.text}")
+    if resp.status_code == 503:
+        raise RuntimeError(f"Artefato do modelo indisponível no backend (503): {resp.text}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def chamar_model_features() -> dict:
+    """Chama GET /model/features e retorna metadados do modelo (cacheado por 1h)."""
+    resp = requests.get(FEATURES_ENDPOINT, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
@@ -288,6 +310,27 @@ with st.sidebar:
     Alinhado à LGPD · Lei Maria da Penha · ODS 5
     </p>
     """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("<p class='bloco-label' style='margin-top:0'>Status do backend</p>", unsafe_allow_html=True)
+    try:
+        _features_meta = chamar_model_features()
+        _scaler_ok = _features_meta.get("scaler_available")
+        _encoders_ok = _features_meta.get("label_encoders_available")
+        _status_icone = "🟢" if (_scaler_ok and _encoders_ok) else "🟡"
+        st.markdown(
+            f"<small style='color:#444'>{_status_icone} Modelo online — "
+            f"{len(_features_meta.get('feature_order', []))} features<br>"
+            f"Scaler: {'ok' if _scaler_ok else 'ausente'} · "
+            f"Encoders: {'ok' if _encoders_ok else 'ausente'}</small>",
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        st.markdown(
+            "<small style='color:#c0392b'>🔴 Não foi possível consultar "
+            f"<code>{FEATURES_ENDPOINT}</code></small>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
     st.markdown(""" 
@@ -510,112 +553,120 @@ with st.form("form_simulador"):
             try:
                 resultado = chamar_predict(payload)
 
-                # ── Extrai os campos esperados do backend ──
-                # Suporta: `probability_reincidencia`, `probabilidade_reincidencia`,
-                # `prob`, `probability` ou o dicionário `probabilities` com rótulos.
-                def find_reinc_prob_from_dict(d: dict):
-                    # tenta achar uma chave que contenha 'reinc' (case-insensitive)
-                    for k, v in d.items():
-                        if isinstance(k, str) and "reinc" in k.lower():
-                            try:
-                                return float(v)
-                            except Exception:
-                                continue
-                    # fallback: procura rótulos comuns
-                    for candidate in ("Reincidencia","Reincidência","reincidencia","reincidência"):
-                        if candidate in d:
-                            try:
-                                return float(d[candidate])
-                            except Exception:
-                                pass
-                    return None
+                # ── Campos exatos do schema de resposta do POST /predict ──
+                prob_f = float(resultado["probability_reincidencia"])
+                prediction_label = resultado.get("prediction_label", "—")
+                probs_dict = resultado.get("probabilities", {}) or {}
+                shap_values = resultado.get("shap_values", {}) or {}
+                shap_base_value = resultado.get("shap_base_value")
+                scaler_used = resultado.get("scaler_used")
+                input_mode = resultado.get("input_mode")
 
-                prob = None
-                # chaves simples
-                for key in ("probability_reincidencia", "probabilidade_reincidencia", "probability", "prob", "probabilidade"):
-                    if key in resultado:
-                        try:
-                            prob = float(resultado[key])
-                            break
-                        except Exception:
-                            pass
+                cor, nivel, cls = cor_risco(prob_f)
+                pct = round(prob_f * 100, 1)
 
-                probs_dict = resultado.get("probabilities") or resultado.get("probabilities", None)
-                if probs_dict and isinstance(probs_dict, dict):
-                    if prob is None:
-                        prob = find_reinc_prob_from_dict(probs_dict)
-
-                # Exibir probabilidades primeiro (full width)
-                if prob is not None:
-                    prob_f = float(prob)
-                    cor, nivel, cls = cor_risco(prob_f)
-                    pct = round(prob_f * 100, 1)
-
-                    # Cartão principal com probabilidade de reincidência
-                    st.markdown(
-                        f"""
-                        <div class="result-card">
-                            <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;
-                                        text-transform:uppercase;color:#8a8278;margin-bottom:0.4rem;">
-                                Probabilidade estimada de reincidência
-                            </div>
-                            <div style="font-size:2.6rem;font-weight:700;color:{cor};
-                                        line-height:1;margin-bottom:0.2rem;">
-                                {pct}%
-                            </div>
-                            <div class="prob-bar-wrapper">
-                                <div class="prob-bar-fill"
-                                     style="width:{pct}%;background:{cor};"></div>
-                            </div>
-                            <div style="font-size:0.82rem;color:#5b5451;margin-top:0.4rem;">
-                                Nível de risco: <span class="{cls}">{nivel}</span>
-                            </div>
+                # Cartão principal com probabilidade de reincidência
+                st.markdown(
+                    f"""
+                    <div class="result-card">
+                        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;
+                                    text-transform:uppercase;color:#8a8278;margin-bottom:0.4rem;">
+                            Probabilidade estimada de reincidência
                         </div>
-                        """,
+                        <div style="font-size:2.6rem;font-weight:700;color:{cor};
+                                    line-height:1;margin-bottom:0.2rem;">
+                            {pct}%
+                        </div>
+                        <div class="prob-bar-wrapper">
+                            <div class="prob-bar-fill"
+                                 style="width:{pct}%;background:{cor};"></div>
+                        </div>
+                        <div style="font-size:0.82rem;color:#5b5451;margin-top:0.4rem;">
+                            Nível de risco: <span class="{cls}">{nivel}</span>
+                            &nbsp;·&nbsp; Classe prevista: <b>{prediction_label}</b>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                # Distribuição por classe (probabilities: {"Primeiro episodio": x, "Reincidencia": y})
+                if probs_dict:
+                    st.markdown("<div style='margin-top:0.9rem;font-weight:600'>Distribuição por classe</div>", unsafe_allow_html=True)
+                    for label, v in probs_dict.items():
+                        try:
+                            pf = float(v)
+                        except Exception:
+                            continue
+                        p_pct = round(pf * 100, 1)
+                        color, _, _ = cor_risco(pf)
+                        st.markdown(
+                            f"""
+                            <div style='margin-top:0.55rem;'>
+                              <div style='font-size:0.82rem;margin-bottom:0.15rem;color:#444'>{label}</div>
+                              <div class='prob-bar-wrapper'>
+                                <div class='prob-bar-fill' style='width:{p_pct}%;background:{color};'></div>
+                              </div>
+                              <div style='font-size:0.78rem;color:#666;margin-top:0.2rem'>{p_pct}%</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                # ── Gráfico SHAP (contribuição de cada feature, em log-odds) ──
+                if shap_values:
+                    st.markdown("<div style='margin-top:1.4rem;font-weight:600'>Fatores de maior peso na predição (SHAP)</div>", unsafe_allow_html=True)
+
+                    # já vem ordenado por |impacto| na resposta da API; mostramos o top 15
+                    itens = list(shap_values.items())[:15]
+                    itens = itens[::-1]  # inverte para o maior impacto ficar no topo do gráfico horizontal
+                    nomes = [k for k, _ in itens]
+                    valores = [float(v) for _, v in itens]
+                    cores = ["#c0392b" if v > 0 else "#27ae60" for v in valores]
+
+                    fig = go.Figure(
+                        go.Bar(
+                            x=valores,
+                            y=nomes,
+                            orientation="h",
+                            marker_color=cores,
+                            text=[f"{v:+.3f}" for v in valores],
+                            textposition="outside",
+                        )
+                    )
+                    fig.update_layout(
+                        height=max(320, 26 * len(nomes)),
+                        margin=dict(l=10, r=30, t=10, b=10),
+                        xaxis_title="Contribuição em log-odds (→ Reincidência | ← Primeiro episódio)",
+                        yaxis_title=None,
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+                    )
+                    fig.add_vline(x=0, line_width=1, line_color="#8a8278")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    if shap_base_value is not None:
+                        st.markdown(
+                            f"<small style='color:#8a8278'>Valor base do modelo (intercepto): "
+                            f"{shap_base_value:.4f} log-odds. Positivo empurra para <b>Reincidência</b>, "
+                            f"negativo empurra para <b>Primeiro episódio</b>.</small>",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.markdown(
+                        '<div class="shap-placeholder">O backend não retornou <code>shap_values</code> para esta predição.</div>',
                         unsafe_allow_html=True,
                     )
 
-                    # Se o backend retornou probabilidades por classe, exibir breakdown
-                    if probs_dict and isinstance(probs_dict, dict):
-                        st.markdown("<div style='margin-top:0.9rem;font-weight:600'>Distribuição por classe</div>", unsafe_allow_html=True)
-                        for label, v in probs_dict.items():
-                            try:
-                                pf = float(v)
-                            except Exception:
-                                continue
-                            p_pct = round(pf * 100, 1)
-                            color, _, _ = cor_risco(pf)
-                            st.markdown(
-                                f"""
-                                <div style='margin-top:0.55rem;'>
-                                  <div style='font-size:0.82rem;margin-bottom:0.15rem;color:#444'>{label}</div>
-                                  <div class='prob-bar-wrapper'>
-                                    <div class='prob-bar-fill' style='width:{p_pct}%;background:{color};'></div>
-                                  </div>
-                                  <div style='font-size:0.78rem;color:#666;margin-top:0.2rem'>{p_pct}%</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-                else:
-                    # Backend retornou algo mas sem campo de probabilidade conhecido
-                    st.info("Resposta recebida, mas campo de probabilidade não reconhecido.")
+                # Detalhes técnicos da resposta (modo de entrada, scaler, ordem de features)
+                with st.expander("Detalhes técnicos da resposta do modelo"):
+                    st.markdown(
+                        f"- **Modo de entrada:** `{input_mode}`\n"
+                        f"- **Scaler aplicado:** `{scaler_used}`\n"
+                        f"- **Predição (classe numérica):** `{resultado.get('prediction')}`"
+                    )
                     st.json(resultado)
-
-                # Exibe campos extras que o backend possa retornar (exclui probabilidades já mostradas)
-                extras = {k: v for k, v in resultado.items()
-                          if k.lower() not in ("probability_reincidencia","probabilidade_reincidencia","probability","prob","probabilidade","probabilities")}
-                if extras:
-                    with st.expander("Detalhes adicionais da resposta"):
-                        st.json(extras)
-
-                st.markdown(
-                    '<div class="shap-placeholder">'
-                    'Gráfico SHAP interativo dos fatores de maior peso<br>'
-                    '<small>(disponível quando o backend enviar <code>shap_values</code>)</small>'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
 
                 # Separador e bloco com os dados enviados abaixo
                 st.markdown("---")
@@ -632,10 +683,17 @@ with st.form("form_simulador"):
                     "❌ Não foi possível conectar ao backend. "
                     f"Verifique se o servidor está em execução em `{BACKEND_URL}`."
                 )
-            #except requests.exceptions.Timeout:
-                #st.error("⏱️ O backend demorou mais de 15 s para responder. Tente novamente.")
+            except requests.exceptions.Timeout:
+                st.error("⏱️ O backend demorou demais para responder. Tente novamente.")
+            except ValueError as e:
+                st.error(f"⚠️ {e}")
+            except RuntimeError as e:
+                st.error(f"⚠️ {e}")
             except requests.exceptions.HTTPError as e:
                 st.error(f"⚠️ Erro HTTP {e.response.status_code}: {e.response.text}")
+            except (KeyError, TypeError) as e:
+                st.error(f"⚠️ Resposta do backend em formato inesperado (campo ausente: {e}).")
+                st.json(resultado if "resultado" in dir() else {})
             except Exception as e:
                 st.error(f"Erro inesperado: {e}")
 
