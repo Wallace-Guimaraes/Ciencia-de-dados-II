@@ -28,7 +28,7 @@ except Exception:
 # ─────────────────────────────────────────────
 # URL do backend — altere conforme seu deploy
 # ─────────────────────────────────────────────
-BACKEND_URL = os.getenv("BACKEND_URL", "https://cdiibackend-grt5.onrender.com")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://truth-muppet-granddad.ngrok-free.dev")
 PREDICT_ENDPOINT = f"{BACKEND_URL}/predict"
 FEATURES_ENDPOINT = f"{BACKEND_URL}/model/features"
 
