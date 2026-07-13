@@ -6,3 +6,6 @@ __pycache__/
 *.py[cod]
 
 .idea
+
+# Streamlit secrets (never commit credentials)
+.streamlit/secrets.toml
