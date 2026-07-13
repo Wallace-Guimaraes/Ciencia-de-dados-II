@@ -4,6 +4,7 @@ import requests
 import plotly.graph_objects as go
 from PIL import Image
 import os
+import json
 
 # ─────────────────────────────────────────────
 # Configuração da página
@@ -51,6 +52,8 @@ AUTH = (API_USER, API_PASSWORD) if API_PASSWORD else None
 PREDICT_ENDPOINT = f"{API_URL}/predict"
 COMPARE_ENDPOINT = f"{API_URL}/predict/compare"
 WHATIF_ENDPOINT = f"{API_URL}/predict/what-if"
+BATCH_ENDPOINT = f"{API_URL}/predict/batch"
+IMPORTANCE_ENDPOINT = f"{API_URL}/model/importance"
 FEATURES_ENDPOINT = f"{API_URL}/model/features"
 
 MODELOS = ["logistica", "random_forest", "xgboost", "lightgbm"]
@@ -288,6 +291,64 @@ SWEEP_CONFIG = {
     "n_encaminhamentos":      (0.0, 5.0, "Nº de encaminhamentos"),
 }
 
+REGIOES = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"]
+
+# Variáveis categóricas varridas na aba What-if (feature → lista de valores conhecidos)
+WHATIF_CAT = {
+    "relacao_agressor": RELACAO_AGRESSOR,
+    "sit_conjugal":     SIT_CONJUGAL,
+    "raca":             RACAS,
+    "escolaridade":     ESCOLARIDADES,
+    "nome_regiao":      REGIOES,
+    "uf":               UFS,
+}
+
+# Variáveis binárias varridas na aba What-if (sempre 0/1)
+WHATIF_BIN = [
+    "parceiro_intimo", "viol_fisica", "viol_psico", "viol_sexual",
+    "viol_financeira", "viol_negligencia", "enc_delegacia", "enc_deam",
+    "enc_creas", "enc_casa_mulher", "cons_suicidio", "cons_saude_mental",
+]
+
+# Rótulos amigáveis de toda variável varrível (numéricas reaproveitam SWEEP_CONFIG)
+WHATIF_LABEL = {
+    **{f: cfg[2] for f, cfg in SWEEP_CONFIG.items()},
+    "relacao_agressor": "Relação com o agressor",
+    "sit_conjugal":     "Situação conjugal",
+    "raca":             "Raça / cor",
+    "escolaridade":     "Escolaridade",
+    "nome_regiao":      "Macroregião",
+    "uf":               "UF de residência",
+    "parceiro_intimo":  "Parceiro íntimo (0/1)",
+    "viol_fisica":      "Violência física (0/1)",
+    "viol_psico":       "Violência psicológica (0/1)",
+    "viol_sexual":      "Violência sexual (0/1)",
+    "viol_financeira":  "Violência financeira (0/1)",
+    "viol_negligencia": "Negligência (0/1)",
+    "enc_delegacia":    "Encaminhamento: Delegacia (0/1)",
+    "enc_deam":         "Encaminhamento: DEAM (0/1)",
+    "enc_creas":        "Encaminhamento: CREAS (0/1)",
+    "enc_casa_mulher":  "Encaminhamento: Casa da Mulher (0/1)",
+    "cons_suicidio":    "Suspeita de suicídio (0/1)",
+    "cons_saude_mental": "Consulta saúde mental (0/1)",
+}
+
+# Ordem exibida no seletor de variável da aba What-if
+WHATIF_FEATURES = list(SWEEP_CONFIG.keys()) + list(WHATIF_CAT.keys()) + WHATIF_BIN
+
+# Campos aceitos por /predict — usados para filtrar colunas de CSV no lote,
+# evitando 422 causado por colunas extras (o backend usa extra="forbid").
+PREDICT_FIELDS = {
+    "ano_num", "cons_saude_mental", "cons_suicidio", "enc_casa_mulher", "enc_creas",
+    "enc_deam", "enc_delegacia", "escolaridade", "idade", "idhm", "indice_gini",
+    "indice_vulnerabilidade", "n_encaminhamentos", "n_tipos_violencia", "nome_regiao",
+    "parceiro_intimo", "prop_pobreza", "raca", "relacao_agressor", "renda_pc",
+    "sit_conjugal", "uf", "viol_fisica", "viol_psico", "viol_sexual", "viol_financeira",
+    "viol_negligencia", "faixa_etaria", "raca_enc", "escolaridade_enc", "sit_conjugal_enc",
+    "relacao_agressor_enc", "uf_enc", "faixa_etaria_enc", "nome_regiao_enc",
+    "features", "model",
+}
+
 # ─────────────────────────────────────────────
 # Níveis de risco — alinhados aos cutoffs do backend (0.33 / 0.66)
 # ─────────────────────────────────────────────
@@ -351,12 +412,35 @@ def chamar_what_if(payload: dict) -> dict:
     return _post(WHATIF_ENDPOINT, payload)
 
 
+def chamar_batch(payload: dict) -> dict:
+    """POST /predict/batch — pontua vários casos (até 500) de uma vez."""
+    return _post(BATCH_ENDPOINT, payload, timeout=120)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def chamar_model_features() -> dict:
     """GET /model/features — metadados do modelo (cacheado por 1h)."""
     resp = requests.get(FEATURES_ENDPOINT, auth=AUTH, timeout=15)
     resp.raise_for_status()
     return resp.json()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def chamar_importance() -> dict:
+    """GET /model/importance — importância global por modelo (cacheado por 1h)."""
+    resp = requests.get(IMPORTANCE_ENDPOINT, auth=AUTH, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def modelos_disponiveis() -> list:
+    """Modelos com artefato carregado no servidor; cai para todos em caso de erro."""
+    try:
+        av = chamar_model_features().get("available_models", {}) or {}
+        disp = [m for m in MODELOS if av.get(m, {}).get("available")]
+        return disp or MODELOS
+    except Exception:
+        return MODELOS
 
 
 def mostrar_erro(e: Exception) -> None:
@@ -521,6 +605,305 @@ def render_prediction(resultado: dict, payload: dict) -> None:
     )
 
 
+def render_comparison(comp: dict) -> None:
+    """Renderiza a resposta de POST /predict/compare (tabela + barras + consenso)."""
+    results = comp.get("results", {}) or {}
+    consensus = comp.get("consensus", {}) or {}
+
+    # Tabela por modelo
+    rows = []
+    for m in MODELOS:
+        r = results.get(m)
+        if not r:
+            continue
+        prob = r.get("probability_reincidencia")
+        nivel = (r.get("risk_level") or "").lower()
+        rows.append({
+            "Modelo": MODELO_LABEL.get(m, m),
+            "Disponível": "sim" if r.get("available") else "não",
+            "Prob. reincidência": f"{prob * 100:.1f}%" if prob is not None else "—",
+            "Nível": NIVEL_LABEL.get(nivel, r.get("risk_level") or "—"),
+            "Classe prevista": r.get("prediction_label") or (r.get("error") or "—"),
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # Barras horizontais de probabilidade por modelo (colorido pelo nível)
+    disp = [
+        (m, results[m])
+        for m in MODELOS
+        if results.get(m) and results[m].get("probability_reincidencia") is not None
+    ]
+    if disp:
+        nomes = [MODELO_LABEL.get(m, m) for m, _ in disp][::-1]
+        valores = [r["probability_reincidencia"] * 100 for _, r in disp][::-1]
+        cores = [
+            NIVEL_CORES.get((r.get("risk_level") or "").lower(), "#8a8278")
+            for _, r in disp
+        ][::-1]
+        figc = go.Figure(
+            go.Bar(
+                x=valores, y=nomes, orientation="h", marker_color=cores,
+                text=[f"{v:.1f}%" for v in valores], textposition="outside",
+            )
+        )
+        figc.update_layout(
+            height=max(240, 62 * len(nomes)),
+            margin=dict(l=10, r=44, t=10, b=10),
+            xaxis_title="Probabilidade de reincidência (%)",
+            xaxis_range=[0, 100],
+            plot_bgcolor="white", paper_bgcolor="white",
+            font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+        )
+        st.plotly_chart(figc, use_container_width=True)
+
+    # Card de consenso
+    if consensus:
+        c_nivel = (consensus.get("risk_level") or "").lower()
+        c_cor = NIVEL_CORES.get(c_nivel, "#8a8278")
+        c_lbl = NIVEL_LABEL.get(c_nivel, consensus.get("risk_level") or "—")
+        mean_p = consensus.get("mean_probability_reincidencia")
+        mean_txt = f"{mean_p * 100:.1f}%" if mean_p is not None else "—"
+        votes = consensus.get("votes", {}) or {}
+        votes_txt = " · ".join(f"{k}: {v}" for k, v in votes.items()) or "—"
+        unanime = "sim" if consensus.get("unanimous") else "não"
+        st.markdown(
+            f"""
+            <div class="result-card" style="margin-top:0.4rem;">
+                <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;
+                            text-transform:uppercase;color:#8a8278;margin-bottom:0.4rem;">
+                    Consenso ({consensus.get('models_compared', 0)} modelos)
+                </div>
+                <div style="font-size:1.5rem;font-weight:700;color:{c_cor};line-height:1.1;">
+                    {consensus.get('prediction_label', '—')}
+                </div>
+                <div style="font-size:0.85rem;color:#5b5451;margin-top:0.5rem;">
+                    Prob. média de reincidência: <b>{mean_txt}</b>
+                    &nbsp;·&nbsp; Nível: <span class="{NIVEL_CLASSE.get(c_nivel, '')}">{c_lbl}</span><br>
+                    Votos — {votes_txt}<br>
+                    Unânime: <b>{unanime}</b>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("Resposta completa da comparação"):
+        st.json(comp)
+
+
+def whatif_kind(feat: str) -> str:
+    """Classifica a variável a varrer: numérica, categórica ou binária."""
+    if feat in SWEEP_CONFIG:
+        return "num"
+    if feat in WHATIF_CAT:
+        return "cat"
+    return "bin"
+
+
+def render_whatif(feature: str, kind: str, wi: dict) -> None:
+    """Renderiza a resposta de POST /predict/what-if (linha p/ numérica, barras p/ categórica)."""
+    points = wi.get("points", []) or []
+    feat_label = WHATIF_LABEL.get(feature, feature)
+    base_value = wi.get("base_value")
+    base_prob = wi.get("base_probability")
+    base_risk = wi.get("base_risk_level")
+
+    ys = [(p.get("probability_reincidencia") or 0) * 100 for p in points]
+    figw = go.Figure()
+    # Faixas de risco (mesmos cutoffs do backend)
+    figw.add_hrect(y0=0, y1=33, fillcolor=NIVEL_CORES["baixo"], opacity=0.08, line_width=0)
+    figw.add_hrect(y0=33, y1=66, fillcolor=NIVEL_CORES["moderado"], opacity=0.08, line_width=0)
+    figw.add_hrect(y0=66, y1=100, fillcolor=NIVEL_CORES["alto"], opacity=0.08, line_width=0)
+
+    if kind == "num":
+        xs = [p["value"] for p in points]
+        figw.add_trace(
+            go.Scatter(
+                x=xs, y=ys, mode="lines+markers", name="Risco",
+                line=dict(color="#3d7a8a", width=2.5), marker=dict(size=6),
+            )
+        )
+        if base_value is not None and base_prob is not None:
+            figw.add_trace(
+                go.Scatter(
+                    x=[base_value], y=[base_prob * 100], mode="markers", name="Perfil base",
+                    marker=dict(size=13, color="#2e2a26", symbol="diamond"),
+                )
+            )
+        figw.update_layout(
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+    else:
+        if kind == "bin":
+            xs = ["Não (0)" if str(p["value"]) in ("0", "0.0", "False") else "Sim (1)" for p in points]
+        else:
+            xs = [str(p["value"]) for p in points]
+        cores = [NIVEL_CORES.get((p.get("risk_level") or "").lower(), "#8a8278") for p in points]
+        figw.add_trace(
+            go.Bar(
+                x=xs, y=ys, marker_color=cores,
+                text=[f"{v:.1f}%" for v in ys], textposition="outside",
+            )
+        )
+        figw.update_layout(xaxis_type="category")
+
+    figw.update_layout(
+        height=430,
+        margin=dict(l=10, r=20, t=10, b=10),
+        xaxis_title=feat_label,
+        yaxis_title="Prob. de reincidência (%)",
+        yaxis_range=[0, 100],
+        plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+    )
+    st.plotly_chart(figw, use_container_width=True)
+
+    if base_prob is not None:
+        if base_risk:
+            _, blbl, _, _ = cor_por_nivel(base_risk)
+        else:
+            _, blbl, _, _ = cor_por_prob(base_prob)
+        st.caption(f"Perfil base ({feat_label} = {base_value}): {base_prob * 100:.1f}% · nível {blbl}.")
+
+    with st.expander("Pontos da curva"):
+        st.dataframe(pd.DataFrame(points), use_container_width=True, hide_index=True)
+
+
+def render_batch(batch: dict) -> None:
+    """Renderiza a resposta de POST /predict/batch (métricas, distribuições, tabela, download)."""
+    summary = batch.get("summary", {}) or {}
+    items = batch.get("items", []) or []
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total", summary.get("total", 0))
+    m2.metric("Pontuados", summary.get("succeeded", 0))
+    m3.metric("Falhas", summary.get("failed", 0))
+    meanp = summary.get("mean_probability_reincidencia")
+    m4.metric("Prob. média", f"{meanp * 100:.1f}%" if meanp is not None else "—")
+
+    warn = batch.get("preprocessing_warning")
+    if warn:
+        st.caption(f"⚠️ {warn}")
+
+    # Distribuição por nível de risco
+    rc = summary.get("risk_counts", {}) or {}
+    if rc:
+        ordem = ["baixo", "moderado", "alto"]
+        xr = [NIVEL_LABEL[n] for n in ordem if n in rc]
+        yr = [rc[n] for n in ordem if n in rc]
+        cr = [NIVEL_CORES[n] for n in ordem if n in rc]
+        figr = go.Figure(go.Bar(x=xr, y=yr, marker_color=cr, text=yr, textposition="outside"))
+        figr.update_layout(
+            height=280, margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title="Nível de risco", yaxis_title="Casos",
+            plot_bgcolor="white", paper_bgcolor="white",
+            font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+        )
+        st.plotly_chart(figr, use_container_width=True)
+
+    # Distribuição por classe prevista
+    lc = summary.get("label_counts", {}) or {}
+    if lc:
+        st.markdown("<b>Distribuição por classe prevista</b>", unsafe_allow_html=True)
+        st.dataframe(
+            pd.DataFrame([{"Classe": k, "Casos": v} for k, v in lc.items()]),
+            use_container_width=True, hide_index=True,
+        )
+
+    # Tabela de resultados por linha + download
+    df_items = pd.DataFrame(items)
+    if not df_items.empty:
+        view = df_items.copy()
+        if "probability_reincidencia" in view.columns:
+            view["probability_reincidencia"] = view["probability_reincidencia"].apply(
+                lambda v: f"{v * 100:.1f}%" if pd.notna(v) else "—"
+            )
+        cols = [c for c in ["index", "prediction_label", "probability_reincidencia", "risk_level", "error"] if c in view.columns]
+        st.dataframe(view[cols], use_container_width=True, hide_index=True)
+        csv = df_items.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Baixar resultados (CSV)", data=csv,
+            file_name="resultados_lote.csv", mime="text/csv", key="dl_batch",
+        )
+
+
+def render_importance(entry: dict, model: str, note) -> None:
+    """Renderiza a importância global de um modelo (GET /model/importance)."""
+    if not entry.get("available"):
+        st.error(f"Modelo indisponível: {entry.get('error') or 'artefato não carregado'}")
+        return
+
+    st.caption(f"Método: {entry.get('method', '—')}")
+
+    importances = entry.get("importances") or {}
+    if importances:
+        itens = list(importances.items())[:15][::-1]
+        nomes = [k for k, _ in itens]
+        vals = [v for _, v in itens]
+        figi = go.Figure(
+            go.Bar(
+                x=vals, y=nomes, orientation="h", marker_color="#3d7a8a",
+                text=[f"{v:.3f}" for v in vals], textposition="outside",
+            )
+        )
+        figi.update_layout(
+            height=max(320, 26 * len(nomes)),
+            margin=dict(l=10, r=40, t=10, b=10),
+            xaxis_title="Importância normalizada (soma = 1)",
+            plot_bgcolor="white", paper_bgcolor="white",
+            font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+        )
+        st.plotly_chart(figi, use_container_width=True)
+
+    # Regressão logística: coeficientes assinados + razões de chance
+    odds = entry.get("odds_ratios")
+    coefs = entry.get("coefficients")
+    if odds and coefs:
+        st.markdown(
+            "<div style='margin-top:1rem;font-weight:600'>Coeficientes (log-odds) — "
+            "regressão logística</div>",
+            unsafe_allow_html=True,
+        )
+        citens = list(coefs.items())[:15][::-1]
+        cn = [k for k, _ in citens]
+        cv = [v for _, v in citens]
+        cores = ["#c0392b" if v > 0 else "#27ae60" for v in cv]
+        figco = go.Figure(
+            go.Bar(
+                x=cv, y=cn, orientation="h", marker_color=cores,
+                text=[f"{v:+.3f}" for v in cv], textposition="outside",
+            )
+        )
+        figco.add_vline(x=0, line_width=1, line_color="#8a8278")
+        figco.update_layout(
+            height=max(320, 26 * len(cn)),
+            margin=dict(l=10, r=40, t=10, b=10),
+            xaxis_title="Coeficiente (log-odds; + empurra p/ Reincidência)",
+            plot_bgcolor="white", paper_bgcolor="white",
+            font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+        )
+        st.plotly_chart(figco, use_container_width=True)
+
+        dfo = pd.DataFrame(
+            [
+                {"Feature": k, "Coeficiente": round(coefs.get(k, 0.0), 4), "Odds ratio": round(v, 4)}
+                for k, v in odds.items()
+            ]
+        )
+        st.dataframe(dfo, use_container_width=True, hide_index=True)
+        st.caption(
+            "Odds ratio > 1: cada +1 desvio-padrão da feature multiplica as chances de "
+            "reincidência por esse fator; < 1 reduz."
+        )
+        inter = entry.get("intercept")
+        if inter is not None:
+            st.caption(f"Intercepto (log-odds): {inter:.4f}")
+
+    if note:
+        st.caption(note)
+
+
 # ─────────────────────────────────────────────
 # Sidebar
 # ─────────────────────────────────────────────
@@ -560,6 +943,14 @@ with st.sidebar:
             f"Encoders: {'ok' if _encoders_ok else 'ausente'}</small>",
             unsafe_allow_html=True,
         )
+        _av = _features_meta.get("available_models", {}) or {}
+        _faltantes = [MODELO_LABEL[m] for m in MODELOS if not _av.get(m, {}).get("available")]
+        if _faltantes:
+            st.markdown(
+                "<small style='color:#b9770e'>⚠️ Indisponível no servidor: "
+                f"{', '.join(_faltantes)}</small>",
+                unsafe_allow_html=True,
+            )
     except Exception:
         st.markdown(
             "<small style='color:#c0392b'>🔴 Não foi possível consultar "
@@ -783,8 +1174,8 @@ st.markdown("---")
 # ═════════════════════════════════════════════
 # Abas: Simulador · Comparar modelos · What-if
 # ═════════════════════════════════════════════
-tab_sim, tab_cmp, tab_wi = st.tabs(
-    ["🎯 Simulador", "⚖️ Comparar modelos", "📈 What-if"]
+tab_sim, tab_cmp, tab_wi, tab_lote, tab_imp = st.tabs(
+    ["🎯 Simulador", "⚖️ Comparar modelos", "📈 What-if", "📋 Lote (CSV)", "🎚️ Importância"]
 )
 
 # ── Aba 1: Simulador (POST /predict) ──────────
@@ -792,7 +1183,7 @@ with tab_sim:
     st.markdown("##### Estimativa para o perfil selecionado")
     modelo_sim = st.selectbox(
         "Modelo",
-        options=MODELOS,
+        options=modelos_disponiveis(),
         format_func=lambda m: MODELO_LABEL[m],
         key="modelo_sim",
         help="Regressão logística usa features escaladas; os modelos de árvore usam valores brutos.",
@@ -806,11 +1197,15 @@ with tab_sim:
         payload = {**montar_payload(), "model": modelo_sim}
         with st.spinner("Consultando o modelo…"):
             try:
-                resultado = chamar_predict(payload)
-                render_prediction(resultado, payload)
+                st.session_state["sim_result"] = (payload, chamar_predict(payload))
             except Exception as e:
+                st.session_state["sim_result"] = None
                 mostrar_erro(e)
-    else:
+
+    if st.session_state.get("sim_result"):
+        _payload, _resultado = st.session_state["sim_result"]
+        render_prediction(_resultado, _payload)
+    elif not estimar:
         st.markdown(
             '<div class="result-placeholder">'
             'Ajuste o perfil acima e clique em <b>Estimar Probabilidade de Reincidência</b>.'
@@ -832,93 +1227,14 @@ with tab_cmp:
     if comparar:
         with st.spinner("Consultando os modelos…"):
             try:
-                comp = chamar_compare(montar_payload())
-                results = comp.get("results", {}) or {}
-                consensus = comp.get("consensus", {}) or {}
-
-                # Tabela por modelo
-                rows = []
-                for m in MODELOS:
-                    r = results.get(m)
-                    if not r:
-                        continue
-                    prob = r.get("probability_reincidencia")
-                    nivel = (r.get("risk_level") or "").lower()
-                    rows.append({
-                        "Modelo": MODELO_LABEL.get(m, m),
-                        "Disponível": "sim" if r.get("available") else "não",
-                        "Prob. reincidência": f"{prob * 100:.1f}%" if prob is not None else "—",
-                        "Nível": NIVEL_LABEL.get(nivel, r.get("risk_level") or "—"),
-                        "Classe prevista": r.get("prediction_label") or (r.get("error") or "—"),
-                    })
-                if rows:
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-                # Barras horizontais de probabilidade por modelo (colorido pelo nível)
-                disp = [
-                    (m, results[m])
-                    for m in MODELOS
-                    if results.get(m) and results[m].get("probability_reincidencia") is not None
-                ]
-                if disp:
-                    nomes = [MODELO_LABEL.get(m, m) for m, _ in disp][::-1]
-                    valores = [r["probability_reincidencia"] * 100 for _, r in disp][::-1]
-                    cores = [
-                        NIVEL_CORES.get((r.get("risk_level") or "").lower(), "#8a8278")
-                        for _, r in disp
-                    ][::-1]
-                    figc = go.Figure(
-                        go.Bar(
-                            x=valores, y=nomes, orientation="h", marker_color=cores,
-                            text=[f"{v:.1f}%" for v in valores], textposition="outside",
-                        )
-                    )
-                    figc.update_layout(
-                        height=max(240, 62 * len(nomes)),
-                        margin=dict(l=10, r=44, t=10, b=10),
-                        xaxis_title="Probabilidade de reincidência (%)",
-                        xaxis_range=[0, 100],
-                        plot_bgcolor="white", paper_bgcolor="white",
-                        font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
-                    )
-                    st.plotly_chart(figc, use_container_width=True)
-
-                # Card de consenso
-                if consensus:
-                    c_nivel = (consensus.get("risk_level") or "").lower()
-                    c_cor = NIVEL_CORES.get(c_nivel, "#8a8278")
-                    c_lbl = NIVEL_LABEL.get(c_nivel, consensus.get("risk_level") or "—")
-                    mean_p = consensus.get("mean_probability_reincidencia")
-                    mean_txt = f"{mean_p * 100:.1f}%" if mean_p is not None else "—"
-                    votes = consensus.get("votes", {}) or {}
-                    votes_txt = " · ".join(f"{k}: {v}" for k, v in votes.items()) or "—"
-                    unanime = "sim" if consensus.get("unanimous") else "não"
-                    st.markdown(
-                        f"""
-                        <div class="result-card" style="margin-top:0.4rem;">
-                            <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;
-                                        text-transform:uppercase;color:#8a8278;margin-bottom:0.4rem;">
-                                Consenso ({consensus.get('models_compared', 0)} modelos)
-                            </div>
-                            <div style="font-size:1.5rem;font-weight:700;color:{c_cor};line-height:1.1;">
-                                {consensus.get('prediction_label', '—')}
-                            </div>
-                            <div style="font-size:0.85rem;color:#5b5451;margin-top:0.5rem;">
-                                Prob. média de reincidência: <b>{mean_txt}</b>
-                                &nbsp;·&nbsp; Nível: <span class="{NIVEL_CLASSE.get(c_nivel, '')}">{c_lbl}</span><br>
-                                Votos — {votes_txt}<br>
-                                Unânime: <b>{unanime}</b>
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                with st.expander("Resposta completa da comparação"):
-                    st.json(comp)
+                st.session_state["cmp_result"] = chamar_compare(montar_payload())
             except Exception as e:
+                st.session_state["cmp_result"] = None
                 mostrar_erro(e)
-    else:
+
+    if st.session_state.get("cmp_result"):
+        render_comparison(st.session_state["cmp_result"])
+    elif not comparar:
         st.markdown(
             '<div class="result-placeholder">'
             'Clique em <b>Comparar os 4 modelos</b> para avaliar o perfil atual em todos eles.'
@@ -938,98 +1254,166 @@ with tab_wi:
     wc1, wc2 = st.columns(2)
     with wc1:
         modelo_wi = st.selectbox(
-            "Modelo", options=MODELOS, format_func=lambda m: MODELO_LABEL[m], key="modelo_wi"
+            "Modelo", options=modelos_disponiveis(),
+            format_func=lambda m: MODELO_LABEL[m], key="modelo_wi",
         )
     with wc2:
         feature_wi = st.selectbox(
             "Variável a analisar",
-            options=list(SWEEP_CONFIG.keys()),
-            format_func=lambda f: SWEEP_CONFIG[f][2],
+            options=WHATIF_FEATURES,
+            format_func=lambda f: WHATIF_LABEL.get(f, f),
             key="feature_wi",
         )
 
-    dflt_start, dflt_stop, feat_label = SWEEP_CONFIG[feature_wi]
-    wc3, wc4, wc5 = st.columns(3)
-    with wc3:
-        start = st.number_input("Início", value=float(dflt_start), key=f"wi_start_{feature_wi}")
-    with wc4:
-        stop = st.number_input("Fim", value=float(dflt_stop), key=f"wi_stop_{feature_wi}")
-    with wc5:
-        steps = st.slider("Pontos", min_value=2, max_value=200, value=20, key="wi_steps")
+    kind = whatif_kind(feature_wi)
+    payload = {"model": modelo_wi, "feature": feature_wi, "base": None}
+    valores_sel = None
+
+    if kind == "num":
+        dflt_start, dflt_stop, _ = SWEEP_CONFIG[feature_wi]
+        wc3, wc4, wc5 = st.columns(3)
+        with wc3:
+            start = st.number_input("Início", value=float(dflt_start), key=f"wi_start_{feature_wi}")
+        with wc4:
+            stop = st.number_input("Fim", value=float(dflt_stop), key=f"wi_stop_{feature_wi}")
+        with wc5:
+            steps = st.slider("Pontos", min_value=2, max_value=200, value=20, key="wi_steps")
+        payload.update(start=float(start), stop=float(stop), steps=int(steps))
+    elif kind == "cat":
+        valores_sel = st.multiselect(
+            "Valores a testar",
+            options=WHATIF_CAT[feature_wi],
+            default=list(WHATIF_CAT[feature_wi]),
+            key=f"wi_vals_{feature_wi}",
+        )
+        payload["values"] = valores_sel
+    else:  # bin
+        st.caption("Variável binária: serão testados os valores 0 (não) e 1 (sim).")
+        payload["values"] = [0, 1]
 
     gerar = st.button("Gerar curva de risco", key="btn_whatif", use_container_width=True)
     st.markdown("---")
 
     if gerar:
-        payload = {
-            "model": modelo_wi,
-            "feature": feature_wi,
-            "base": montar_payload(),
-            "start": float(start),
-            "stop": float(stop),
-            "steps": int(steps),
-        }
-        with st.spinner("Calculando curva…"):
-            try:
-                wi = chamar_what_if(payload)
-                points = wi.get("points", []) or []
-                xs = [p["value"] for p in points]
-                ys = [(p.get("probability_reincidencia") or 0) * 100 for p in points]
-
-                figw = go.Figure()
-                # Faixas de risco (mesmos cutoffs do backend)
-                figw.add_hrect(y0=0, y1=33, fillcolor=NIVEL_CORES["baixo"], opacity=0.08, line_width=0)
-                figw.add_hrect(y0=33, y1=66, fillcolor=NIVEL_CORES["moderado"], opacity=0.08, line_width=0)
-                figw.add_hrect(y0=66, y1=100, fillcolor=NIVEL_CORES["alto"], opacity=0.08, line_width=0)
-                figw.add_trace(
-                    go.Scatter(
-                        x=xs, y=ys, mode="lines+markers", name="Risco",
-                        line=dict(color="#3d7a8a", width=2.5), marker=dict(size=6),
+        if kind == "cat" and len(valores_sel or []) < 2:
+            st.warning("Selecione ao menos 2 valores para comparar.")
+        else:
+            payload["base"] = montar_payload()
+            with st.spinner("Calculando curva…"):
+                try:
+                    st.session_state["wi_result"] = (
+                        feature_wi, kind, chamar_what_if(payload)
                     )
-                )
-                base_value = wi.get("base_value")
-                base_prob = wi.get("base_probability")
-                if base_value is not None and base_prob is not None:
-                    figw.add_trace(
-                        go.Scatter(
-                            x=[base_value], y=[base_prob * 100], mode="markers", name="Perfil base",
-                            marker=dict(size=13, color="#2e2a26", symbol="diamond"),
-                        )
-                    )
-                figw.update_layout(
-                    height=430,
-                    margin=dict(l=10, r=20, t=10, b=10),
-                    xaxis_title=feat_label,
-                    yaxis_title="Prob. de reincidência (%)",
-                    yaxis_range=[0, 100],
-                    plot_bgcolor="white", paper_bgcolor="white",
-                    font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                )
-                st.plotly_chart(figw, use_container_width=True)
+                except Exception as e:
+                    st.session_state["wi_result"] = None
+                    mostrar_erro(e)
 
-                if base_prob is not None:
-                    base_risk = wi.get("base_risk_level")
-                    if base_risk:
-                        _, blbl, _, _ = cor_por_nivel(base_risk)
-                    else:
-                        _, blbl, _, _ = cor_por_prob(base_prob)
-                    st.caption(
-                        f"Perfil base ({feat_label} = {base_value}): "
-                        f"{base_prob * 100:.1f}% · nível {blbl}."
-                    )
-
-                with st.expander("Pontos da curva"):
-                    st.dataframe(pd.DataFrame(points), use_container_width=True, hide_index=True)
-            except Exception as e:
-                mostrar_erro(e)
-    else:
+    if st.session_state.get("wi_result"):
+        _f, _k, _wi = st.session_state["wi_result"]
+        render_whatif(_f, _k, _wi)
+    elif not gerar:
         st.markdown(
             '<div class="result-placeholder">'
             'Escolha uma variável e clique em <b>Gerar curva de risco</b> para ver a sensibilidade.'
             '</div>',
             unsafe_allow_html=True,
         )
+
+# ── Aba 4: Lote (CSV) (POST /predict/batch) ───
+with tab_lote:
+    st.markdown("##### Pontuação em lote (CSV)")
+    st.markdown(
+        "<small style='color:#55556a'>Envie um CSV onde cada linha é um caso com os "
+        "campos nomeados do modelo. Até <b>500 casos</b> por envio.</small>",
+        unsafe_allow_html=True,
+    )
+
+    lc1, lc2 = st.columns(2)
+    with lc1:
+        modelo_lote = st.selectbox(
+            "Modelo", options=modelos_disponiveis(),
+            format_func=lambda m: MODELO_LABEL[m], key="modelo_lote",
+        )
+    with lc2:
+        incluir_shap = st.checkbox(
+            "Incluir SHAP por linha", value=False, key="lote_shap",
+            help="Anexa a explicação SHAP de cada linha (dobra o tamanho da resposta).",
+        )
+
+    # Template com uma linha de exemplo (perfil atual) para o usuário preencher
+    _template_df = pd.DataFrame([montar_payload()])
+    st.download_button(
+        "Baixar modelo de CSV (1 exemplo)",
+        data=_template_df.to_csv(index=False).encode("utf-8"),
+        file_name="modelo_lote.csv", mime="text/csv", key="dl_template",
+    )
+
+    up = st.file_uploader("CSV de casos", type=["csv"], key="lote_csv")
+    df_lote = None
+    if up is not None:
+        try:
+            df_lote = pd.read_csv(up)
+        except Exception as e:
+            st.error(f"Não foi possível ler o CSV: {e}")
+
+    pontuar = False
+    if df_lote is not None:
+        descartadas = [c for c in df_lote.columns if c not in PREDICT_FIELDS]
+        if descartadas:
+            st.warning(f"Colunas ignoradas (não reconhecidas pelo modelo): {', '.join(descartadas)}")
+        df_lote = df_lote[[c for c in df_lote.columns if c in PREDICT_FIELDS]]
+        if len(df_lote) > 500:
+            st.warning(f"{len(df_lote)} linhas recebidas; apenas as 500 primeiras serão pontuadas.")
+            df_lote = df_lote.head(500)
+        st.markdown(
+            f"<small style='color:#666'>Pré-visualização ({len(df_lote)} linhas):</small>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(df_lote.head(), use_container_width=True, hide_index=True)
+        pontuar = st.button("Pontuar lote", key="btn_batch", use_container_width=True)
+
+    st.markdown("---")
+
+    if pontuar and df_lote is not None:
+        # to_json converte NaN→null e emite tipos nativos (evita erro de serialização numpy)
+        items = json.loads(df_lote.to_json(orient="records"))
+        payload = {"model": modelo_lote, "include_shap": incluir_shap, "items": items}
+        with st.spinner("Pontuando o lote…"):
+            try:
+                st.session_state["batch_result"] = chamar_batch(payload)
+            except Exception as e:
+                st.session_state["batch_result"] = None
+                mostrar_erro(e)
+
+    if st.session_state.get("batch_result"):
+        render_batch(st.session_state["batch_result"])
+    elif not pontuar:
+        st.markdown(
+            '<div class="result-placeholder">'
+            'Baixe o modelo de CSV, preencha os casos e faça o upload para pontuar em lote.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+# ── Aba 5: Importância global (GET /model/importance) ──
+with tab_imp:
+    st.markdown("##### Importância global das features")
+    st.markdown(
+        "<small style='color:#55556a'>Quais variáveis mais pesam em cada modelo, no geral "
+        "(complementa o SHAP, que explica um caso por vez).</small>",
+        unsafe_allow_html=True,
+    )
+    modelo_imp = st.selectbox(
+        "Modelo", options=modelos_disponiveis(),
+        format_func=lambda m: MODELO_LABEL[m], key="modelo_imp",
+    )
+    st.markdown("---")
+    try:
+        _imp_data = chamar_importance()
+        _entry = (_imp_data.get("models", {}) or {}).get(modelo_imp, {})
+        render_importance(_entry, modelo_imp, _imp_data.get("note"))
+    except Exception as e:
+        mostrar_erro(e)
 
 
 st.markdown(
