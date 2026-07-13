@@ -54,6 +54,8 @@ WHATIF_ENDPOINT = f"{API_URL}/predict/what-if"
 BATCH_ENDPOINT = f"{API_URL}/predict/batch"
 IMPORTANCE_ENDPOINT = f"{API_URL}/model/importance"
 FEATURES_ENDPOINT = f"{API_URL}/model/features"
+CLUSTERS_ENDPOINT = f"{API_URL}/clusters"
+MUNICIPIOS_ENDPOINT = f"{API_URL}/municipios"
 
 MODELOS = ["logistica", "random_forest", "xgboost", "lightgbm"]
 MODELO_LABEL = {
@@ -221,6 +223,15 @@ UF_PARA_REGIAO = {
     "SC":"Sul","SE":"Nordeste","SP":"Sudeste","TO":"Norte",
 }
 
+# UF <-> código IBGE de 2 dígitos (o parquet de clusters usa o código, não a sigla)
+UF_TO_IBGE = {
+    "RO":"11","AC":"12","AM":"13","RR":"14","PA":"15","AP":"16","TO":"17",
+    "MA":"21","PI":"22","CE":"23","RN":"24","PB":"25","PE":"26","AL":"27",
+    "SE":"28","BA":"29","MG":"31","ES":"32","RJ":"33","SP":"35","PR":"41",
+    "SC":"42","RS":"43","MS":"50","MT":"51","GO":"52","DF":"53",
+}
+IBGE_TO_UF = {v: k for k, v in UF_TO_IBGE.items()}
+
 IDHM_POR_REGIAO = {
     "Norte":"Médio (0.60–0.69)",
     "Nordeste":"Baixo (0.50–0.59)",
@@ -375,6 +386,32 @@ def cor_por_nivel(risk_level):
     return NIVEL_CORES[nivel], NIVEL_LABEL[nivel], NIVEL_CLASSE[nivel], nivel
 
 
+# Cluster municipal (0/1/2) -> nível de risco, para reusar as cores/rótulos de risco.
+CLUSTER_NIVEL = {0: "baixo", 1: "moderado", 2: "alto"}
+
+
+def cor_cluster(cluster_id, cluster_label: str = "") -> str:
+    """Cor do nível de risco de um cluster municipal (pelo id 0/1/2 ou pelo rótulo)."""
+    nivel = CLUSTER_NIVEL.get(cluster_id)
+    if nivel is None:
+        lab = (cluster_label or "").casefold()
+        nivel = "baixo" if "baixo" in lab else "alto" if "alto" in lab else "moderado"
+    return NIVEL_CORES.get(nivel, "#8a8278")
+
+
+def faixa_from_idhm(idhm: float) -> str:
+    """Mapeia um IDHM numérico para o rótulo de faixa mais próximo (IDHM_OPTIONS)."""
+    if idhm < 0.50:
+        return "Muito baixo (< 0.50)"
+    if idhm < 0.60:
+        return "Baixo (0.50–0.59)"
+    if idhm < 0.70:
+        return "Médio (0.60–0.69)"
+    if idhm < 0.80:
+        return "Alto (0.70–0.79)"
+    return "Muito alto (≥ 0.80)"
+
+
 # ---------------------------------------------
 # Chamadas HTTP autenticadas ao backend
 # ---------------------------------------------
@@ -428,6 +465,24 @@ def chamar_model_features() -> dict:
 def chamar_importance() -> dict:
     """GET /model/importance — importância global por modelo (cacheado por 1h)."""
     resp = requests.get(IMPORTANCE_ENDPOINT, auth=AUTH, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def chamar_clusters() -> dict:
+    """GET /clusters — tipologia dos clusters municipais (cacheado por 1h)."""
+    resp = requests.get(CLUSTERS_ENDPOINT, auth=AUTH, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def chamar_municipio(cod: str):
+    """GET /municipios/{cod} — cluster e perfil de um município; None quando 404."""
+    resp = requests.get(f"{MUNICIPIOS_ENDPOINT}/{cod}", auth=AUTH, timeout=15)
+    if resp.status_code == 404:
+        return None
     resp.raise_for_status()
     return resp.json()
 
@@ -510,6 +565,26 @@ def render_prediction(resultado: dict, payload: dict) -> None:
 
     if preproc_warn:
         st.caption(f"Aviso: {preproc_warn}")
+
+    # Contexto do cluster municipal, quando um cod_mun6 conhecido foi enviado
+    mc = resultado.get("municipal_cluster")
+    if mc:
+        clabel = mc.get("cluster_label", "—")
+        cor_mc = cor_cluster(mc.get("cluster"), clabel)
+        tx = mc.get("taxa_reincidencia")
+        tx_txt = f"{tx * 100:.1f}%" if tx is not None else "—"
+        st.markdown(
+            f"<div style='margin-top:0.6rem;font-size:0.82rem;color:#5b5451;'>"
+            f"Município <b>{mc.get('cod_mun6', '—')}</b> &nbsp;·&nbsp; "
+            f"Cluster municipal: <b style='color:{cor_mc}'>{clabel}</b> &nbsp;·&nbsp; "
+            f"reincidência média local <b>{tx_txt}</b></div>",
+            unsafe_allow_html=True,
+        )
+        auto = mc.get("autofilled_fields") or []
+        if auto:
+            st.caption(
+                "Campos preenchidos pelo backend a partir do IBGE: " + ", ".join(auto) + "."
+            )
 
     # Distribuição por classe
     if probs_dict:
@@ -903,6 +978,166 @@ def render_importance(entry: dict, model: str, note) -> None:
         st.caption(note)
 
 
+def render_municipio_badge(ctx) -> None:
+    """Mostra o resultado da busca por município (badge do cluster, 404 ou erro)."""
+    if not ctx:
+        return
+    if ctx.get("error") is not None:
+        mostrar_erro(ctx["error"])
+        return
+    if ctx.get("not_found"):
+        st.info(
+            f"Município {ctx['not_found']} não está na base de clusters "
+            "(cobertura de ~4.248 dos 5.570 municípios). Preencha os campos manualmente."
+        )
+        return
+    row = ctx.get("row") or {}
+    clabel = row.get("cluster_label", "—")
+    cor = cor_cluster(row.get("cluster"), clabel)
+    uf_sigla = IBGE_TO_UF.get(str(row.get("uf") or ""), str(row.get("uf") or "—"))
+    tx = row.get("taxa_reincidencia")
+    tx_txt = f"{tx * 100:.1f}%" if tx is not None else "—"
+    st.markdown(
+        f"""
+        <div class="result-card" style="padding:0.9rem 1.1rem;margin:0.2rem 0 1rem;">
+            <small style="color:#8a8278;text-transform:uppercase;letter-spacing:0.08em;
+                          font-size:0.66rem;font-weight:600;">
+                Município {row.get('cod_mun6', '—')} · {uf_sigla} · {row.get('nome_regiao', '—')}
+            </small>
+            <div style="margin-top:0.35rem;font-size:1.05rem;font-weight:700;color:{cor};">
+                Cluster: {clabel}
+            </div>
+            <div style="margin-top:0.3rem;font-size:0.8rem;color:#5b5451;">
+                Reincidência média municipal: <b>{tx_txt}</b> &nbsp;·&nbsp;
+                IDHM/renda/Gini/pobreza preenchidos a partir do IBGE
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# Variáveis do perfil médio exibidas nos cards e no radar da tipologia
+TIPOLOGIA_CAMPOS = [
+    ("idhm", "IDHM", lambda v: f"{v:.3f}"),
+    ("renda_pc", "Renda per capita", lambda v: f"R$ {v:,.0f}"),
+    ("indice_gini", "Gini", lambda v: f"{v:.3f}"),
+    ("prop_pobreza", "Pobreza", lambda v: f"{v:.1f}%"),
+    ("taxa_analfabetismo", "Analfabetismo", lambda v: f"{v:.1f}%"),
+    ("taxa_reincidencia", "Reincidência", lambda v: f"{v * 100:.1f}%"),
+    ("n_notificacoes", "Notificações (méd.)", lambda v: f"{v:,.0f}"),
+]
+
+
+def render_tipologia(data: dict) -> None:
+    """Renderiza a tipologia de clusters (cards de perfil médio + radar comparativo)."""
+    clusters = sorted(data.get("clusters", []) or [], key=lambda c: c.get("cluster", 0))
+    if not clusters:
+        st.info("Nenhum cluster retornado pelo backend.")
+        return
+
+    # Cards: um por cluster, com contagem e perfil médio
+    for col, c in zip(st.columns(len(clusters)), clusters):
+        clabel = c.get("cluster_label", "—")
+        cor = cor_cluster(c.get("cluster"), clabel)
+        means = c.get("means", {}) or {}
+        linhas = "".join(
+            f"<div style='display:flex;justify-content:space-between;font-size:0.8rem;"
+            f"color:#5b5451;margin-top:0.28rem;'><span>{lbl}</span>"
+            f"<b>{fmt(means[k])}</b></div>"
+            for k, lbl, fmt in TIPOLOGIA_CAMPOS
+            if means.get(k) is not None
+        )
+        col.markdown(
+            f"""
+            <div class="result-card" style="padding:1rem 1.1rem;">
+                <div style="font-size:0.66rem;text-transform:uppercase;letter-spacing:0.08em;
+                            font-weight:600;color:#8a8278;">Cluster {c.get('cluster')}</div>
+                <div style="font-size:1.1rem;font-weight:700;color:{cor};margin:0.1rem 0 0.15rem;">
+                    {clabel}</div>
+                <div style="font-size:0.76rem;color:#8a8278;margin-bottom:0.5rem;">
+                    {c.get('count', 0)} municípios</div>
+                {linhas}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # Radar comparativo: cada variável normalizada 0-1 entre os clusters
+    feats = [k for k, _, _ in TIPOLOGIA_CAMPOS]
+    labels = {k: lbl for k, lbl, _ in TIPOLOGIA_CAMPOS}
+    faixas = {}
+    for k in feats:
+        vs = [
+            (c.get("means", {}) or {}).get(k)
+            for c in clusters
+            if (c.get("means", {}) or {}).get(k) is not None
+        ]
+        faixas[k] = (min(vs), max(vs)) if vs else (0.0, 1.0)
+
+    figt = go.Figure()
+    theta = [labels[k] for k in feats] + [labels[feats[0]]]
+    for c in clusters:
+        means = c.get("means", {}) or {}
+        r, raw = [], []
+        for k in feats:
+            v = means.get(k)
+            lo, hi = faixas[k]
+            r.append(0.5 if v is None or hi == lo else (v - lo) / (hi - lo))
+            raw.append(v if v is not None else float("nan"))
+        figt.add_trace(
+            go.Scatterpolar(
+                r=r + [r[0]], theta=theta, customdata=raw + [raw[0]],
+                fill="toself", name=c.get("cluster_label", "—"),
+                line=dict(color=cor_cluster(c.get("cluster"), c.get("cluster_label", ""))),
+                hovertemplate="%{theta}: %{customdata:.2f}<extra>"
+                + str(c.get("cluster_label", "")) + "</extra>",
+            )
+        )
+    figt.update_layout(
+        height=460, margin=dict(l=40, r=40, t=50, b=40),
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1], showticklabels=False)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5),
+        paper_bgcolor="white",
+        font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
+    )
+    st.plotly_chart(figt, width="stretch")
+    st.caption(
+        "Radar normalizado (0–1 por variável entre os clusters; passe o mouse para o valor "
+        f"bruto). Médias sobre {data.get('total', '—')} municípios "
+        "(linha-agregado '000000' excluída)."
+    )
+
+
+def _buscar_municipio() -> None:
+    """Callback do botão 'Buscar município': consulta o IBGE e preenche o perfil."""
+    cod = (st.session_state.get("cod_mun6_input") or "").strip()
+    if not cod:
+        st.session_state["muni_ctx"] = None
+        return
+    try:
+        row = chamar_municipio(cod)
+    except Exception as e:
+        st.session_state["muni_ctx"] = {"error": e}
+        return
+    if row is None:
+        st.session_state["muni_ctx"] = {"not_found": cod}
+        return
+    uf_sigla = IBGE_TO_UF.get(str(row.get("uf") or ""))
+    if uf_sigla:
+        st.session_state["uf_select"] = uf_sigla
+        st.session_state["last_uf"] = uf_sigla  # evita o reset automático da faixa de IDHM
+    if row.get("idhm") is not None:
+        st.session_state["faixa_idhm"] = faixa_from_idhm(float(row["idhm"]))
+    if row.get("renda_pc") is not None:
+        st.session_state["renda_pc"] = round(float(row["renda_pc"]), 2)
+    if row.get("indice_gini") is not None:
+        st.session_state["indice_gini"] = round(float(row["indice_gini"]), 2)
+    if row.get("prop_pobreza") is not None:
+        st.session_state["prop_pobreza"] = round(float(row["prop_pobreza"]) * 2) / 2
+    st.session_state["muni_ctx"] = {"row": row}
+
+
 # ---------------------------------------------
 # Sidebar
 # ---------------------------------------------
@@ -997,10 +1232,10 @@ st.markdown(
 st.markdown("")
 
 # - UF e região ---------------------------
+st.session_state.setdefault("uf_select", "PA")
 uf = st.selectbox(
     "UF de residência",
     options=UFS,
-    index=UFS.index("PA"),
     key="uf_select",
 )
 
@@ -1013,10 +1248,26 @@ if st.session_state.get("last_uf") != uf:
 
 st.markdown('<p class="bloco-label">Contexto municipal (IDH)</p>', unsafe_allow_html=True)
 
+mcod1, mcod2 = st.columns([3, 1])
+with mcod1:
+    st.text_input(
+        "Código IBGE do município (6 dígitos, opcional)",
+        key="cod_mun6_input",
+        placeholder="ex.: 150140 (Belém)",
+        help="Preenche IDHM, renda, Gini e pobreza a partir da base municipal e mostra o cluster de risco.",
+    )
+with mcod2:
+    st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+    st.button(
+        "Buscar município", key="btn_buscar_muni",
+        on_click=_buscar_municipio, width="stretch",
+    )
+
+render_municipio_badge(st.session_state.get("muni_ctx"))
+
 faixa_idhm = st.select_slider(
     "Faixa de IDHM municipal",
     options=IDHM_OPTIONS,
-    value=st.session_state.get("faixa_idhm", idhm_auto),
     key="faixa_idhm",
     help="Valor inicial baseado na média da macroregião da UF selecionada",
 )
@@ -1093,26 +1344,29 @@ with ce5:
 st.markdown('<p class="bloco-label">Contexto socioeconômico</p>', unsafe_allow_html=True)
 cs1, cs2, cs3 = st.columns(3)
 with cs1:
+    st.session_state.setdefault("renda_pc", 1200.0)
     renda_pc = st.number_input(
         "Renda per capita (R$)",
         min_value=0.0, max_value=50000.0,
-        value=1200.0, step=50.0,
+        step=50.0,
         key="renda_pc",
         help="Renda mensal per capita estimada do município/grupo",
     )
 with cs2:
+    st.session_state.setdefault("prop_pobreza", 20.0)
     prop_pobreza = st.slider(
         "Proporção em pobreza (%)",
         min_value=0.0, max_value=100.0,
-        value=20.0, step=0.5,
+        step=0.5,
         key="prop_pobreza",
         help="% da população abaixo da linha de pobreza",
     )
 with cs3:
+    st.session_state.setdefault("indice_gini", 0.50)
     indice_gini = st.slider(
         "Índice de Gini",
         min_value=0.0, max_value=1.0,
-        value=0.50, step=0.01,
+        step=0.01,
         key="indice_gini",
         help="Desigualdade de renda (0 = perfeita igualdade, 1 = máxima desigualdade)",
     )
@@ -1173,8 +1427,9 @@ st.markdown("---")
 # =============================================
 # Abas: Simulador · Comparar modelos · What-if
 # =============================================
-tab_sim, tab_cmp, tab_wi, tab_lote, tab_imp = st.tabs(
-    ["Simulador", "Comparar modelos", "What-if", "Lote (CSV)", "Importância"]
+tab_sim, tab_cmp, tab_wi, tab_lote, tab_imp, tab_tip = st.tabs(
+    ["Simulador", "Comparar modelos", "What-if", "Lote (CSV)", "Importância",
+     "Tipologia municipal"]
 )
 
 # -- Aba 1: Simulador (POST /predict) ----------
@@ -1194,6 +1449,9 @@ with tab_sim:
 
     if estimar:
         payload = {**montar_payload(), "model": modelo_sim}
+        _cod_mun = (st.session_state.get("cod_mun6_input") or "").strip()
+        if _cod_mun:
+            payload["cod_mun6"] = _cod_mun
         with st.spinner("Consultando o modelo..."):
             try:
                 st.session_state["sim_result"] = (payload, chamar_predict(payload))
@@ -1411,6 +1669,21 @@ with tab_imp:
         _imp_data = chamar_importance()
         _entry = (_imp_data.get("models", {}) or {}).get(modelo_imp, {})
         render_importance(_entry, modelo_imp, _imp_data.get("note"))
+    except Exception as e:
+        mostrar_erro(e)
+
+# -- Aba 6: Tipologia municipal (GET /clusters) --
+with tab_tip:
+    st.markdown("##### Tipologia de risco municipal")
+    st.markdown(
+        "<small style='color:#55556a'>Os municípios da base foram agrupados em "
+        "<b>3 clusters</b> de risco por perfil socioeconômico. Veja o perfil médio de cada "
+        "grupo e um radar comparativo.</small>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+    try:
+        render_tipologia(chamar_clusters())
     except Exception as e:
         mostrar_erro(e)
 
