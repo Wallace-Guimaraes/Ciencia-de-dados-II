@@ -6,9 +6,9 @@ from PIL import Image
 import os
 import json
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Configuração da página
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Tenta carregar ícone, mas não quebra se não existir
 try:
     icon = Image.open("violencia-icon.png")
@@ -21,16 +21,15 @@ try:
 except Exception:
     st.set_page_config(
         page_title="VulneraMapa — Violência Doméstica",
-        page_icon="🔴",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Configuração de acesso ao backend
 # Credenciais vêm de st.secrets (Streamlit Cloud → App settings → Secrets),
 # com fallback para variáveis de ambiente na execução local.
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 def _cfg(key: str, default: str = "") -> str:
     """Lê uma chave de st.secrets; se ausente, cai para variável de ambiente."""
     try:
@@ -64,9 +63,9 @@ MODELO_LABEL = {
     "lightgbm": "LightGBM",
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # CSS
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
@@ -204,9 +203,9 @@ div[data-baseweb="select"] > div {
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Constantes / enumerações
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 UFS = sorted([
     "AC","AL","AM","AP","BA","CE","DF","ES","GO",
     "MA","MG","MS","MT","PA","PB","PE","PI","PR",
@@ -336,7 +335,7 @@ WHATIF_LABEL = {
 # Ordem exibida no seletor de variável da aba What-if
 WHATIF_FEATURES = list(SWEEP_CONFIG.keys()) + list(WHATIF_CAT.keys()) + WHATIF_BIN
 
-# Campos aceitos por /predict — usados para filtrar colunas de CSV no lote,
+# Campos aceitos por /predict - usados para filtrar colunas de CSV no lote,
 # evitando 422 causado por colunas extras (o backend usa extra="forbid").
 PREDICT_FIELDS = {
     "ano_num", "cons_saude_mental", "cons_suicidio", "enc_casa_mulher", "enc_creas",
@@ -349,9 +348,9 @@ PREDICT_FIELDS = {
     "features", "model",
 }
 
-# ─────────────────────────────────────────────
-# Níveis de risco — alinhados aos cutoffs do backend (0.33 / 0.66)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+# Níveis de risco - alinhados aos cutoffs do backend (0.33 / 0.66)
+# ---------------------------------------------
 NIVEL_CORES = {"baixo": "#27ae60", "moderado": "#d35400", "alto": "#c0392b"}
 NIVEL_LABEL = {"baixo": "Baixo", "moderado": "Moderado", "alto": "Alto"}
 NIVEL_CLASSE = {"baixo": "risco-baixo", "moderado": "risco-medio", "alto": "risco-alto"}
@@ -376,9 +375,9 @@ def cor_por_nivel(risk_level):
     return NIVEL_CORES[nivel], NIVEL_LABEL[nivel], NIVEL_CLASSE[nivel], nivel
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Chamadas HTTP autenticadas ao backend
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 def _post(url: str, payload: dict, timeout: int = 30) -> dict:
     """POST autenticado; traduz os códigos de erro documentados da API."""
     resp = requests.post(url, json=payload, auth=AUTH, timeout=timeout)
@@ -446,20 +445,20 @@ def modelos_disponiveis() -> list:
 def mostrar_erro(e: Exception) -> None:
     """Renderiza uma mensagem de erro amigável para as exceções esperadas."""
     if isinstance(e, PermissionError):
-        st.error(f"🔒 {e}")
+        st.error(str(e))
     elif isinstance(e, requests.exceptions.ConnectionError):
         st.error(
-            "❌ Não foi possível conectar ao backend. "
+            "Não foi possível conectar ao backend. "
             f"Verifique se o servidor está em execução em `{API_URL}`."
         )
     elif isinstance(e, requests.exceptions.Timeout):
-        st.error("⏱️ O backend demorou demais para responder. Tente novamente.")
+        st.error("O backend demorou demais para responder. Tente novamente.")
     elif isinstance(e, (ValueError, RuntimeError)):
-        st.error(f"⚠️ {e}")
+        st.error(str(e))
     elif isinstance(e, requests.exceptions.HTTPError):
-        st.error(f"⚠️ Erro HTTP {e.response.status_code}: {e.response.text}")
+        st.error(f"Erro HTTP {e.response.status_code}: {e.response.text}")
     elif isinstance(e, (KeyError, TypeError)):
-        st.error(f"⚠️ Resposta do backend em formato inesperado (campo ausente: {e}).")
+        st.error(f"Resposta do backend em formato inesperado (campo ausente: {e}).")
     else:
         st.error(f"Erro inesperado: {e}")
 
@@ -510,7 +509,7 @@ def render_prediction(resultado: dict, payload: dict) -> None:
     )
 
     if preproc_warn:
-        st.caption(f"⚠️ {preproc_warn}")
+        st.caption(f"Aviso: {preproc_warn}")
 
     # Distribuição por classe
     if probs_dict:
@@ -565,7 +564,7 @@ def render_prediction(resultado: dict, payload: dict) -> None:
             font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
         )
         fig.add_vline(x=0, line_width=1, line_color="#8a8278")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         if shap_base_value is not None:
             st.markdown(
@@ -599,7 +598,7 @@ def render_prediction(resultado: dict, payload: dict) -> None:
     st.markdown("**Dados enviados ao modelo:**")
     st.dataframe(
         pd.DataFrame(payload.items(), columns=["Campo", "Valor"]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=480,
     )
@@ -626,7 +625,7 @@ def render_comparison(comp: dict) -> None:
             "Classe prevista": r.get("prediction_label") or (r.get("error") or "—"),
         })
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     # Barras horizontais de probabilidade por modelo (colorido pelo nível)
     disp = [
@@ -655,7 +654,7 @@ def render_comparison(comp: dict) -> None:
             plot_bgcolor="white", paper_bgcolor="white",
             font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
         )
-        st.plotly_chart(figc, use_container_width=True)
+        st.plotly_chart(figc, width="stretch")
 
     # Card de consenso
     if consensus:
@@ -757,7 +756,7 @@ def render_whatif(feature: str, kind: str, wi: dict) -> None:
         plot_bgcolor="white", paper_bgcolor="white",
         font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
     )
-    st.plotly_chart(figw, use_container_width=True)
+    st.plotly_chart(figw, width="stretch")
 
     if base_prob is not None:
         if base_risk:
@@ -767,7 +766,7 @@ def render_whatif(feature: str, kind: str, wi: dict) -> None:
         st.caption(f"Perfil base ({feat_label} = {base_value}): {base_prob * 100:.1f}% · nível {blbl}.")
 
     with st.expander("Pontos da curva"):
-        st.dataframe(pd.DataFrame(points), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(points), width="stretch", hide_index=True)
 
 
 def render_batch(batch: dict) -> None:
@@ -784,7 +783,7 @@ def render_batch(batch: dict) -> None:
 
     warn = batch.get("preprocessing_warning")
     if warn:
-        st.caption(f"⚠️ {warn}")
+        st.caption(f"Aviso: {warn}")
 
     # Distribuição por nível de risco
     rc = summary.get("risk_counts", {}) or {}
@@ -800,7 +799,7 @@ def render_batch(batch: dict) -> None:
             plot_bgcolor="white", paper_bgcolor="white",
             font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
         )
-        st.plotly_chart(figr, use_container_width=True)
+        st.plotly_chart(figr, width="stretch")
 
     # Distribuição por classe prevista
     lc = summary.get("label_counts", {}) or {}
@@ -808,7 +807,7 @@ def render_batch(batch: dict) -> None:
         st.markdown("<b>Distribuição por classe prevista</b>", unsafe_allow_html=True)
         st.dataframe(
             pd.DataFrame([{"Classe": k, "Casos": v} for k, v in lc.items()]),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
 
     # Tabela de resultados por linha + download
@@ -820,7 +819,7 @@ def render_batch(batch: dict) -> None:
                 lambda v: f"{v * 100:.1f}%" if pd.notna(v) else "—"
             )
         cols = [c for c in ["index", "prediction_label", "probability_reincidencia", "risk_level", "error"] if c in view.columns]
-        st.dataframe(view[cols], use_container_width=True, hide_index=True)
+        st.dataframe(view[cols], width="stretch", hide_index=True)
         csv = df_items.to_csv(index=False).encode("utf-8")
         st.download_button(
             "Baixar resultados (CSV)", data=csv,
@@ -854,7 +853,7 @@ def render_importance(entry: dict, model: str, note) -> None:
             plot_bgcolor="white", paper_bgcolor="white",
             font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
         )
-        st.plotly_chart(figi, use_container_width=True)
+        st.plotly_chart(figi, width="stretch")
 
     # Regressão logística: coeficientes assinados + razões de chance
     odds = entry.get("odds_ratios")
@@ -883,7 +882,7 @@ def render_importance(entry: dict, model: str, note) -> None:
             plot_bgcolor="white", paper_bgcolor="white",
             font=dict(family="Sora, sans-serif", size=12, color="#2e2a26"),
         )
-        st.plotly_chart(figco, use_container_width=True)
+        st.plotly_chart(figco, width="stretch")
 
         dfo = pd.DataFrame(
             [
@@ -891,7 +890,7 @@ def render_importance(entry: dict, model: str, note) -> None:
                 for k, v in odds.items()
             ]
         )
-        st.dataframe(dfo, use_container_width=True, hide_index=True)
+        st.dataframe(dfo, width="stretch", hide_index=True)
         st.caption(
             "Odds ratio > 1: cada +1 desvio-padrão da feature multiplica as chances de "
             "reincidência por esse fator; < 1 reduz."
@@ -904,9 +903,9 @@ def render_importance(entry: dict, model: str, note) -> None:
         st.caption(note)
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Sidebar
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 with st.sidebar:
     st.markdown("### VulneraMapa")
     st.markdown(
@@ -935,9 +934,9 @@ with st.sidebar:
         _features_meta = chamar_model_features()
         _scaler_ok = _features_meta.get("scaler_available")
         _encoders_ok = _features_meta.get("label_encoders_available")
-        _status_icone = "🟢" if (_scaler_ok and _encoders_ok) else "🟡"
+        _status_cor = "#27ae60" if (_scaler_ok and _encoders_ok) else "#d4a017"
         st.markdown(
-            f"<small style='color:#444'>{_status_icone} Modelo online — "
+            f"<small style='color:#444'><span style='color:{_status_cor}'>&#9679;</span> Modelo online — "
             f"{len(_features_meta.get('feature_order', []))} features<br>"
             f"Scaler: {'ok' if _scaler_ok else 'ausente'} · "
             f"Encoders: {'ok' if _encoders_ok else 'ausente'}</small>",
@@ -947,13 +946,13 @@ with st.sidebar:
         _faltantes = [MODELO_LABEL[m] for m in MODELOS if not _av.get(m, {}).get("available")]
         if _faltantes:
             st.markdown(
-                "<small style='color:#b9770e'>⚠️ Indisponível no servidor: "
+                "<small style='color:#b9770e'>Indisponível no servidor: "
                 f"{', '.join(_faltantes)}</small>",
                 unsafe_allow_html=True,
             )
     except Exception:
         st.markdown(
-            "<small style='color:#c0392b'>🔴 Não foi possível consultar "
+            "<small style='color:#c0392b'>&#9679; Não foi possível consultar "
             f"<code>{FEATURES_ENDPOINT}</code>.<br>Verifique a URL e as credenciais.</small>",
             unsafe_allow_html=True,
         )
@@ -967,9 +966,9 @@ with st.sidebar:
 
     """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # Cabeçalho
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 st.markdown(
     '<p class="main-subtitle">Uma ferramenta de apoio para profissionais — estimativa por perfil de grupo</p>',
     unsafe_allow_html=True,
@@ -985,9 +984,9 @@ st.markdown(
 st.markdown("---")
 
 
-# ═════════════════════════════════════════════
+# =============================================
 # Perfil compartilhado (base para todas as abas)
-# ═════════════════════════════════════════════
+# =============================================
 st.markdown("#### Simulador de Perfil Sociodemográfico")
 st.markdown(
     "<small style='color:#55556a'>Defina as características do perfil <b>uma única vez</b>. "
@@ -997,7 +996,7 @@ st.markdown(
 )
 st.markdown("")
 
-# — UF e região ———————————————————————————
+# - UF e região ---------------------------
 uf = st.selectbox(
     "UF de residência",
     options=UFS,
@@ -1039,7 +1038,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# — Bloco 1: Perfil da vítima ———————————————
+# - Bloco 1: Perfil da vítima ---------------
 st.markdown('<p class="bloco-label">Perfil da vítima</p>', unsafe_allow_html=True)
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -1068,7 +1067,7 @@ with c6:
         key="autor_alcool",
     )
 
-# — Bloco 2: Tipo de violência ——————————————
+# - Bloco 2: Tipo de violência --------------
 st.markdown('<p class="bloco-label">Tipo(s) de violência relatados</p>', unsafe_allow_html=True)
 cv = st.columns(len(TIPOS_VIOLENCIA))
 sel_violencias = {}
@@ -1076,7 +1075,7 @@ for i, (col_key, label) in enumerate(TIPOS_VIOLENCIA.items()):
     with cv[i]:
         sel_violencias[col_key] = st.checkbox(label, value=(col_key == "viol_fisica"), key=f"chk_{col_key}")
 
-# — Bloco 3: Encaminhamentos ————————————————
+# - Bloco 3: Encaminhamentos ----------------
 st.markdown('<p class="bloco-label">Encaminhamentos realizados</p>', unsafe_allow_html=True)
 ce1, ce2, ce3, ce4, ce5 = st.columns(5)
 with ce1:
@@ -1090,7 +1089,7 @@ with ce4:
 with ce5:
     enc_saude_mental   = st.checkbox("Saúde mental", key="enc_saude_mental")
 
-# — Bloco 4: Contexto socioeconômico ————————
+# - Bloco 4: Contexto socioeconômico --------
 st.markdown('<p class="bloco-label">Contexto socioeconômico</p>', unsafe_allow_html=True)
 cs1, cs2, cs3 = st.columns(3)
 with cs1:
@@ -1171,14 +1170,14 @@ def montar_payload() -> dict:
 
 st.markdown("---")
 
-# ═════════════════════════════════════════════
+# =============================================
 # Abas: Simulador · Comparar modelos · What-if
-# ═════════════════════════════════════════════
+# =============================================
 tab_sim, tab_cmp, tab_wi, tab_lote, tab_imp = st.tabs(
-    ["🎯 Simulador", "⚖️ Comparar modelos", "📈 What-if", "📋 Lote (CSV)", "🎚️ Importância"]
+    ["Simulador", "Comparar modelos", "What-if", "Lote (CSV)", "Importância"]
 )
 
-# ── Aba 1: Simulador (POST /predict) ──────────
+# -- Aba 1: Simulador (POST /predict) ----------
 with tab_sim:
     st.markdown("##### Estimativa para o perfil selecionado")
     modelo_sim = st.selectbox(
@@ -1189,13 +1188,13 @@ with tab_sim:
         help="Regressão logística usa features escaladas; os modelos de árvore usam valores brutos.",
     )
     estimar = st.button(
-        "Estimar Probabilidade de Reincidência", key="btn_predict", use_container_width=True
+        "Estimar Probabilidade de Reincidência", key="btn_predict", width="stretch"
     )
     st.markdown("---")
 
     if estimar:
         payload = {**montar_payload(), "model": modelo_sim}
-        with st.spinner("Consultando o modelo…"):
+        with st.spinner("Consultando o modelo..."):
             try:
                 st.session_state["sim_result"] = (payload, chamar_predict(payload))
             except Exception as e:
@@ -1213,7 +1212,7 @@ with tab_sim:
             unsafe_allow_html=True,
         )
 
-# ── Aba 2: Comparar modelos (POST /predict/compare) ──
+# -- Aba 2: Comparar modelos (POST /predict/compare) --
 with tab_cmp:
     st.markdown("##### Comparação entre os 4 modelos")
     st.markdown(
@@ -1221,11 +1220,11 @@ with tab_cmp:
         "disponíveis, com um voto de <b>consenso</b> por maioria.</small>",
         unsafe_allow_html=True,
     )
-    comparar = st.button("Comparar os 4 modelos", key="btn_compare", use_container_width=True)
+    comparar = st.button("Comparar os 4 modelos", key="btn_compare", width="stretch")
     st.markdown("---")
 
     if comparar:
-        with st.spinner("Consultando os modelos…"):
+        with st.spinner("Consultando os modelos..."):
             try:
                 st.session_state["cmp_result"] = chamar_compare(montar_payload())
             except Exception as e:
@@ -1242,7 +1241,7 @@ with tab_cmp:
             unsafe_allow_html=True,
         )
 
-# ── Aba 3: What-if (POST /predict/what-if) ────
+# -- Aba 3: What-if (POST /predict/what-if) ----
 with tab_wi:
     st.markdown("##### Análise de sensibilidade (what-if)")
     st.markdown(
@@ -1291,7 +1290,7 @@ with tab_wi:
         st.caption("Variável binária: serão testados os valores 0 (não) e 1 (sim).")
         payload["values"] = [0, 1]
 
-    gerar = st.button("Gerar curva de risco", key="btn_whatif", use_container_width=True)
+    gerar = st.button("Gerar curva de risco", key="btn_whatif", width="stretch")
     st.markdown("---")
 
     if gerar:
@@ -1299,7 +1298,7 @@ with tab_wi:
             st.warning("Selecione ao menos 2 valores para comparar.")
         else:
             payload["base"] = montar_payload()
-            with st.spinner("Calculando curva…"):
+            with st.spinner("Calculando curva..."):
                 try:
                     st.session_state["wi_result"] = (
                         feature_wi, kind, chamar_what_if(payload)
@@ -1319,7 +1318,7 @@ with tab_wi:
             unsafe_allow_html=True,
         )
 
-# ── Aba 4: Lote (CSV) (POST /predict/batch) ───
+# -- Aba 4: Lote (CSV) (POST /predict/batch) ---
 with tab_lote:
     st.markdown("##### Pontuação em lote (CSV)")
     st.markdown(
@@ -1369,8 +1368,8 @@ with tab_lote:
             f"<small style='color:#666'>Pré-visualização ({len(df_lote)} linhas):</small>",
             unsafe_allow_html=True,
         )
-        st.dataframe(df_lote.head(), use_container_width=True, hide_index=True)
-        pontuar = st.button("Pontuar lote", key="btn_batch", use_container_width=True)
+        st.dataframe(df_lote.head(), width="stretch", hide_index=True)
+        pontuar = st.button("Pontuar lote", key="btn_batch", width="stretch")
 
     st.markdown("---")
 
@@ -1378,7 +1377,7 @@ with tab_lote:
         # to_json converte NaN→null e emite tipos nativos (evita erro de serialização numpy)
         items = json.loads(df_lote.to_json(orient="records"))
         payload = {"model": modelo_lote, "include_shap": incluir_shap, "items": items}
-        with st.spinner("Pontuando o lote…"):
+        with st.spinner("Pontuando o lote..."):
             try:
                 st.session_state["batch_result"] = chamar_batch(payload)
             except Exception as e:
@@ -1395,7 +1394,7 @@ with tab_lote:
             unsafe_allow_html=True,
         )
 
-# ── Aba 5: Importância global (GET /model/importance) ──
+# -- Aba 5: Importância global (GET /model/importance) --
 with tab_imp:
     st.markdown("##### Importância global das features")
     st.markdown(
@@ -1418,7 +1417,7 @@ with tab_imp:
 
 st.markdown(
     '<div class="nota-metodologica">'
-    '⚠️ <b>Nota metodológica:</b> Este resultado representa uma estimativa estatística para um '
+    '<b>Nota metodológica:</b> Este resultado representa uma estimativa estatística para um '
     '<b>perfil de grupo sociodemográfico</b>, não um diagnóstico individual. '
     'A variável-alvo é a <b>reincidência</b> (campo OUT_VEZES do SINAN). '
     'Grupos com alta subnotificação (mulheres negras, rurais, sem escolaridade formal) '
