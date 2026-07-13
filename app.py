@@ -1681,6 +1681,25 @@ with tab_tip:
         "grupo e um radar comparativo.</small>",
         unsafe_allow_html=True,
     )
+    with st.expander("Como ler esta aba"):
+        st.markdown(
+            "- **O que é:** um algoritmo de agrupamento (*clustering*) juntou os ~4,2 mil "
+            "municípios da base em **3 grupos** com perfil socioeconômico e histórico de "
+            "reincidência parecidos. Cada grupo recebeu um rótulo: **Baixo**, **Médio** e "
+            "**Alto risco**.\n"
+            "- **Os cards:** mostram o *município médio* de cada grupo — quantos municípios "
+            "ele reúne e a média de cada indicador (IDHM, renda, Gini, pobreza, "
+            "analfabetismo, reincidência e nº de notificações).\n"
+            "- **O radar:** compara os mesmos indicadores, mas **normalizados de 0 a 1** "
+            "entre os grupos (o menor valor vira 0 e o maior vira 1), porque as escalas são "
+            "muito diferentes (renda em centenas de reais vs. IDHM perto de 0,6). Passe o "
+            "mouse sobre o gráfico para ver o **valor bruto**.\n"
+            "- **Atenção ao rótulo:** *risco* aqui significa **reincidência observada**, não "
+            "grau de pobreza. O grupo de **Alto risco** tende a reunir municípios maiores / "
+            "urbanos, com muito mais **notificações** (mais denúncia registrada → mais "
+            "reincidência captada). Já grupos mais pobres podem ter menos notificações por "
+            "**subnotificação** — o mesmo viés citado na nota metodológica no rodapé."
+        )
     st.markdown("---")
     try:
         render_tipologia(chamar_clusters())
